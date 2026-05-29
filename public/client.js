@@ -1,230 +1,349 @@
+/* =========================================================
+   すごろくゲーム  client.js
+   バージョン: v1.0
+   日付: 2026-05-29
+   このファイル: ブラウザ側（画面表示・ルーレット演出・音）
+   v1.0での変更点:
+     - サーバーの moves(seq番号つき) を順番に1つずつ演出する方式に変更
+     - 「ルーレットが止まってからコマが進む」流れを徹底
+     - 順番の逆転・1周でのフリーズを解消
+     - ルーレットの見た目と音は前のバージョンのまま
+   ※ server.js も同じ v1.0 とセットで使うこと
+   ========================================================= */
+
 const socket = io();
+const COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6"];
+const SEGMENTS = 10;
 
-// ===== 画面の部品 =====
-const nameInput = document.getElementById("nameInput");
-const nameBtn   = document.getElementById("nameBtn");
-const statusEl  = document.getElementById("status");
-const playersEl = document.getElementById("players");
-const boardEl   = document.getElementById("board");
-const startBtn  = document.getElementById("startBtn");
-const rollBtn   = document.getElementById("rollBtn");
-const resultEl  = document.getElementById("result");
-const wheel     = document.getElementById("wheel");
-const ctx       = wheel.getContext("2d");
-
-// ===== 自分のID・状態の記憶 =====
-let myId = null;
-let lastShownRoll = -1;   // 前回ルーレットを止めた「動いた人」の記録（二重演出ふせぎ）
-let lastRollSeq = -1;     // 動いた回数の記録
-let spinning = false;
-let currentWheelDeg = 0;  // 今のルーレットの回転角度
-
-// コマの色
-const PAWN_COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6"];
-
-// ===== ルーレットの絵を描く（1〜10） =====
+// ルーレットの区画の色（1→10の順）
 const WHEEL_COLORS = [
-  "#ff6b6b", "#feca57", "#48dbfb", "#1dd1a1", "#ff9ff3",
-  "#54a0ff", "#ee5253", "#10ac84", "#f368e0", "#576574"
+  "#f4d000", "#f5a623", "#e8731c", "#e8231c", "#e6007e",
+  "#9b3fb5", "#5b3fb5", "#1c9ee8", "#2e8b3f", "#8bc63f",
 ];
 
+let myId = null;
+let goal = 40;
+let currentRotation = 0;
+let lastWinnerShown = false;
+
+// ===== 演出の管理 =====
+let lastShownSeq = 0;      // どの seq まで演出し終えたか
+let animating = false;     // 今、演出中か
+let latestState = null;    // 最新のサーバー状態を覚えておく
+
+const boardEl = document.getElementById("board");
+const statusEl = document.getElementById("status");
+const playersEl = document.getElementById("players");
+const resultEl = document.getElementById("result");
+const startBtn = document.getElementById("startBtn");
+const rollBtn = document.getElementById("rollBtn");
+const wheel = document.getElementById("wheel");
+const ctx = wheel.getContext("2d");
+const nameInput = document.getElementById("nameInput");
+const nameBtn = document.getElementById("nameBtn");
+const nameArea = document.getElementById("nameArea");
+
+// ===== 音 =====
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+}
+function beep(freq, durationMs, type = "square", volume = 0.2) {
+  if (!audioCtx) return;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.type = type;
+  osc.frequency.value = freq;
+  gain.gain.value = volume;
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + durationMs / 1000);
+}
+let tickTimer = null;
+function startTicking() {
+  let interval = 60;
+  const tick = () => {
+    beep(900, 30, "square", 0.12);
+    interval += 12;
+    if (interval < 280) tickTimer = setTimeout(tick, interval);
+  };
+  tick();
+}
+function stopTicking() { if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; } }
+function stopSound() {
+  beep(660, 120, "triangle", 0.3);
+  setTimeout(() => beep(880, 160, "triangle", 0.3), 120);
+}
+function stepSound() { beep(1200, 60, "square", 0.2); }
+function winSound() {
+  const notes = [523, 659, 784, 1047];
+  notes.forEach((n, i) => setTimeout(() => beep(n, 200, "triangle", 0.3), i * 180));
+}
+
+// ===== ルーレット描画（前のバージョンのまま）=====
 function drawWheel() {
-  const N = 10;
-  const cx = 130, cy = 130, R = 125, rInner = 45;
-  ctx.clearRect(0, 0, 260, 260);
-  for (let i = 0; i < N; i++) {
-    const a0 = (i / N) * Math.PI * 2 - Math.PI / 2;
-    const a1 = ((i + 1) / N) * Math.PI * 2 - Math.PI / 2;
-    // 扇形
+  const size = wheel.width;
+  const r = size / 2;
+  const seg = (Math.PI * 2) / SEGMENTS;
+  ctx.clearRect(0, 0, size, size);
+
+  ctx.beginPath();
+  ctx.arc(r, r, r - 2, 0, Math.PI * 2);
+  ctx.fillStyle = "#fff";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "#ccc";
+  ctx.stroke();
+
+  const outerR = r - 6;
+  const innerR = r * 0.42;
+
+  for (let i = 0; i < SEGMENTS; i++) {
+    const start = i * seg - Math.PI / 2;
+    const end = (i + 1) * seg - Math.PI / 2;
+
     ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.arc(cx, cy, R, a0, a1);
+    ctx.arc(r, r, outerR, start, end);
+    ctx.arc(r, r, innerR, end, start, true);
     ctx.closePath();
     ctx.fillStyle = WHEEL_COLORS[i];
     ctx.fill();
-    // 数字
-    const am = (a0 + a1) / 2;
-    const tx = cx + Math.cos(am) * (R * 0.7);
-    const ty = cy + Math.sin(am) * (R * 0.7);
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = "#fff";
+    ctx.stroke();
+
     ctx.save();
-    ctx.translate(tx, ty);
-    ctx.rotate(am + Math.PI / 2);
-    ctx.fillStyle = "#fff";
-    ctx.font = "bold 22px sans-serif";
+    ctx.translate(r, r);
+    ctx.rotate(start + seg / 2);
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(String(i + 1), 0, 0);
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 26px sans-serif";
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    const textR = (outerR + innerR) / 2;
+    ctx.rotate(Math.PI / 2);
+    ctx.strokeText(String(i + 1), 0, -textR + 4);
+    ctx.fillText(String(i + 1), 0, -textR + 4);
     ctx.restore();
   }
-  // 中央の丸
+
   ctx.beginPath();
-  ctx.arc(cx, cy, rInner, 0, Math.PI * 2);
-  ctx.fillStyle = "#fff";
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = "#ddd";
+  const deco = 8;
+  for (let i = 0; i < deco; i++) {
+    const a = (Math.PI * 2 / deco) * i;
+    const x = r + Math.cos(a) * innerR * 0.5;
+    const y = r + Math.sin(a) * innerR * 0.5;
+    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.strokeStyle = "#bbb";
+  ctx.lineWidth = 2;
   ctx.stroke();
 }
 drawWheel();
 
-// ===== 音（軽い電子音） =====
-let audioCtx = null;
-function beep(freq, dur) {
-  try {
-    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const o = audioCtx.createOscillator();
-    const g = audioCtx.createGain();
-    o.connect(g); g.connect(audioCtx.destination);
-    o.type = "square";
-    o.frequency.value = freq;
-    g.gain.value = 0.08;
-    o.start();
-    o.stop(audioCtx.currentTime + dur);
-  } catch (e) {}
-}
-
-// ===== ルーレットを「数字 number(1〜10)」で止める =====
-function spinTo(number, onDone) {
-  spinning = true;
-  const N = 10;
-  const idx = number - 1;
-  // その数字の扇形の中央が、上の矢印（真上）に来るようにする
-  const segCenter = (idx + 0.5) / N * 360; // その数字の中央角度
-  const turns = 5; // 5回転してから止める
-  const target = turns * 360 + (360 - segCenter);
-  // 今の角度から、必ず前向きに回す
-  const base = currentWheelDeg - (currentWheelDeg % 360);
-  currentWheelDeg = base + target;
-  wheel.style.transform = "rotate(" + currentWheelDeg + "deg)";
-  beep(880, 0.05);
+// ===== ルーレットを回す → 止まったら onStop =====
+function spinTo(dice, onStop) {
+  ensureAudio();
+  startTicking();
+  const seg = 360 / SEGMENTS;
+  const targetAngle = 360 * 5 + (360 - (dice - 1) * seg - seg / 2);
+  currentRotation += targetAngle;
+  wheel.style.transform = `rotate(${currentRotation}deg)`;
   setTimeout(() => {
-    spinning = false;
-    beep(1320, 0.12);
-    if (onDone) onDone();
-  }, 4100);
+    stopTicking();
+    stopSound();
+    if (onStop) setTimeout(onStop, 400);
+  }, 4000);
 }
 
-// ===== 盤面を描く =====
-function renderBoard(players, goal) {
-  boardEl.innerHTML = "";
-  for (let i = 0; i <= goal; i++) {
-    const cell = document.createElement("div");
-    cell.className = "cell";
-    if (i === 0) cell.classList.add("start");
-    if (i === goal) cell.classList.add("goal");
+// ===== コマを1歩ずつ進める（指定の位置を上書きして描く）=====
+function animateSteps(playerIndex, from, to, onDone) {
+  let current = from;
+  const stepOnce = () => {
+    if (current >= to) { if (onDone) onDone(); return; }
+    current += 1;
+    drawBoardWithOverride(playerIndex, current);
+    stepSound();
+    if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
+    setTimeout(stepOnce, 350);
+  };
+  if (from === to) { if (onDone) onDone(); return; }
+  stepOnce();
+}
 
-    const num = document.createElement("div");
-    num.className = "num";
-    num.textContent = (i === 0) ? "START" : (i === goal ? "GOAL" : i);
-    cell.appendChild(num);
-
-    const pawns = document.createElement("div");
-    pawns.className = "pawns";
-    players.forEach((p, idx) => {
-      if (p.pos === i) {
-        const wrap = document.createElement("div");
-        wrap.className = "pawnWrap";
-        const pawn = document.createElement("div");
-        pawn.className = "pawn";
-        pawn.style.background = PAWN_COLORS[idx % PAWN_COLORS.length];
-        const nm = document.createElement("div");
-        nm.className = "pawnName";
-        nm.textContent = p.name;
-        wrap.appendChild(pawn);
-        wrap.appendChild(nm);
-        pawns.appendChild(wrap);
-      }
-    });
-    cell.appendChild(pawns);
-    boardEl.appendChild(cell);
+// ===== 演出のメイン：まだ見せていない move を順番に1つずつ =====
+function processNextMove() {
+  if (animating) return;
+  if (!latestState) return;
+  const moves = latestState.moves || [];
+  // まだ見せていない、いちばん古い move を探す
+  const next = moves.find((m) => m.seq === lastShownSeq + 1);
+  if (!next) {
+    // もう演出するものがない → 最新状態をそのまま表示して終わり
+    finalizeState(latestState);
+    return;
   }
-}
 
-// ===== プレイヤー一覧を描く =====
-function renderPlayers(players, currentTurn) {
-  playersEl.innerHTML = players.map((p, i) => {
-    const here = (i === currentTurn) ? "▶ " : "";
-    const rankTxt = (p.rank > 0) ? "（" + p.rank + "位）" : "";
-    return here + p.name + "（" + p.pos + "）" + rankTxt;
-  }).join("　/　");
-}
-
-// ===== サーバーからの状態 =====
-socket.on("joined", (id) => { myId = id; });
-
-socket.on("rejected", (msg) => {
-  statusEl.textContent = msg;
-  startBtn.disabled = true;
+  animating = true;
   rollBtn.disabled = true;
-});
+  statusEl.textContent = next.name + " がルーレットを回しています...";
 
-socket.on("state", (s) => {
-  const { players, currentTurn, started, finished, goal, lastDice, lastRolledIndex } = s;
+  // まず古い位置（from）で盤面を描く
+  drawBoardWithOverride(next.index, next.from);
 
-  // 盤面とプレイヤー一覧は「毎回サーバーの通り」に描く（ズレない）
-  renderBoard(players, goal);
-  renderPlayers(players, currentTurn);
+  // ルーレットを回す → 止まったらコマを進める
+  spinTo(next.dice, () => {
+    statusEl.textContent = next.name + " が " + next.dice + " を出しました";
+    animateSteps(next.index, next.from, next.to, () => {
+      lastShownSeq = next.seq;
+      animating = false;
+      // 次の move があれば続けて演出
+      processNextMove();
+    });
+  });
+}
 
-  // 開始前
-  if (!started) {
-    statusEl.textContent = "名前を決めて「ゲーム開始」を押してください";
-    startBtn.disabled = false;
-    rollBtn.disabled = true;
-    nameInput.disabled = false;
-    nameBtn.disabled = false;
-    return;
-  }
-
-  startBtn.disabled = true;
-  nameInput.disabled = true;
-  nameBtn.disabled = true;
-
-  // 全員ゴール
-  if (finished) {
-    statusEl.textContent = "ゲーム終了！";
-    rollBtn.disabled = true;
-    const ranking = players
-      .slice()
-      .sort((a, b) => a.rank - b.rank)
-      .map((p) => p.rank + "位：" + p.name)
-      .join("\n");
-    resultEl.textContent = "【けっか】\n" + ranking;
-    return;
-  }
-
-  // 今が誰の番か
-  const turnPlayer = players[currentTurn];
-  const myTurn = turnPlayer && turnPlayer.id === myId;
-  statusEl.textContent = "いまの番：" + (turnPlayer ? turnPlayer.name : "");
-  rollBtn.disabled = !myTurn || spinning;
-
-  // だれかが動いたら、ルーレット演出をする（サーバーの言う通りに）
-  if (lastDice != null && lastRolledIndex != null) {
-    // 二重演出ふせぎ：今回の「動いた目」がまだ見せていないものなら演出する
-    const seq = (s.players[lastRolledIndex] ? s.players[lastRolledIndex].pos : 0) * 1000 + lastDice;
-    if (!spinning && seq !== lastRollSeq) {
-      lastRollSeq = seq;
-      const moverName = players[lastRolledIndex] ? players[lastRolledIndex].name : "";
-      rollBtn.disabled = true;
-      spinTo(lastDice, () => {
-        statusEl.textContent = moverName + " が " + lastDice + " を出しました";
-      });
-    }
-  }
-});
-
-// ===== ボタン =====
+// ===== 名前・ボタン =====
 nameBtn.addEventListener("click", () => {
+  ensureAudio();
   const name = nameInput.value.trim();
   if (name) socket.emit("setName", name);
 });
+startBtn.addEventListener("click", () => { ensureAudio(); socket.emit("start"); });
+rollBtn.addEventListener("click", () => { ensureAudio(); rollBtn.disabled = true; socket.emit("roll"); });
 
-startBtn.addEventListener("click", () => {
-  if (!audioCtx) { try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) {} }
-  socket.emit("start");
+socket.on("joined", (id) => { myId = id; });
+socket.on("rejected", (msg) => {
+  statusEl.textContent = msg;
+  startBtn.disabled = true; rollBtn.disabled = true;
 });
 
-rollBtn.addEventListener("click", () => {
-  rollBtn.disabled = true;
-  socket.emit("roll");
+socket.on("state", (state) => {
+  goal = state.goal;
+  latestState = state;
+
+  // ゲーム前 or 終了は、すぐ表示を更新
+  if (!state.started || state.finished) {
+    finalizeState(state);
+  }
+  // 演出すべき move があれば順番に演出する
+  processNextMove();
 });
+
+// ===== 盤面描画 =====
+function buildCell(i) {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  if (i === 0) cell.classList.add("start");
+  if (i === goal) cell.classList.add("goal");
+  const num = document.createElement("div");
+  num.className = "num";
+  num.textContent = i === 0 ? "START" : i === goal ? "GOAL" : i;
+  cell.appendChild(num);
+  return cell;
+}
+
+function placePawns(cells, positions) {
+  if (!latestState) return;
+  latestState.players.forEach((p, idx) => {
+    const pos = positions[idx];
+    const cell = cells[pos];
+    if (!cell) return;
+    let pawnsEl = cell.querySelector(".pawns");
+    if (!pawnsEl) {
+      pawnsEl = document.createElement("div");
+      pawnsEl.className = "pawns";
+      cell.appendChild(pawnsEl);
+    }
+    const wrap = document.createElement("div");
+    wrap.className = "pawnWrap";
+    const pawn = document.createElement("div");
+    pawn.className = "pawn";
+    pawn.style.background = COLORS[idx];
+    const nm = document.createElement("div");
+    nm.className = "pawnName";
+    nm.textContent = p.name;
+    wrap.appendChild(pawn);
+    wrap.appendChild(nm);
+    pawnsEl.appendChild(wrap);
+  });
+}
+
+// すでに演出し終えた手の位置を計算して返す（lastShownSeq までを反映した位置）
+function positionsUpToShown() {
+  const pos = {};
+  latestState.players.forEach((p, i) => { pos[i] = 0; });
+  const moves = latestState.moves || [];
+  moves.forEach((m) => {
+    if (m.seq <= lastShownSeq) pos[m.index] = m.to;
+  });
+  return pos;
+}
+
+// 通常描画（演出し終えた位置で描く）
+function drawBoard() {
+  boardEl.innerHTML = "";
+  const cells = [];
+  for (let i = 0; i <= goal; i++) {
+    const cell = buildCell(i);
+    cells.push(cell);
+    boardEl.appendChild(cell);
+  }
+  placePawns(cells, positionsUpToShown());
+}
+
+// 1人だけ途中位置で描く（アニメ用）
+function drawBoardWithOverride(overrideIdx, overridePos) {
+  boardEl.innerHTML = "";
+  const cells = [];
+  for (let i = 0; i <= goal; i++) {
+    const cell = buildCell(i);
+    cells.push(cell);
+    boardEl.appendChild(cell);
+  }
+  const pos = positionsUpToShown();
+  pos[overrideIdx] = overridePos;
+  placePawns(cells, pos);
+}
+
+// ===== 演出が全部終わったときの最終表示 =====
+function finalizeState(state) {
+  drawBoard();
+
+  playersEl.innerHTML = state.players
+    .map((p, idx) => `<span style="color:${COLORS[idx]}">●</span>${p.name}（${p.pos}）`)
+    .join("　");
+
+  if (state.finished) {
+    statusEl.textContent = "🏁 全員ゴール！ゲーム終了";
+    startBtn.disabled = true; rollBtn.disabled = true;
+    showResult(state);
+    return;
+  }
+  if (!state.started) {
+    statusEl.textContent = "名前を決めて「ゲーム開始」を押してください";
+    startBtn.disabled = false; rollBtn.disabled = true;
+    nameArea.style.display = "";
+    return;
+  }
+
+  startBtn.disabled = true;
+  nameArea.style.display = "none";
+  const current = state.players[state.currentTurn];
+  const myTurn = current && current.id === myId;
+  statusEl.textContent = myTurn
+    ? "あなたの番です！ルーレットを回してください"
+    : (current ? current.name + " の番です..." : "");
+  rollBtn.disabled = !myTurn || animating;
+}
+
+function showResult(state) {
+  if (!state.finished) { resultEl.textContent = ""; return; }
+  const ranked = [...state.players].filter(p => p.rank > 0).sort((a, b) => a.rank - b.rank);
+  resultEl.textContent = "【結果】\n" +
+    ranked.map(p => `${p.rank}位：${p.name}`).join("\n");
+  if (!lastWinnerShown) { lastWinnerShown = true; ensureAudio(); winSound(); }
+}
