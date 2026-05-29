@@ -9,24 +9,24 @@ const io = new Server(server);
 
 app.use(express.static(path.join(__dirname, "public")));
 
-// UptimeRobotの自動ping用。ここにアクセスが来るとサーバーが起き続ける
 app.get("/health", (req, res) => res.send("ok"));
 
 // ===== ゲーム設定 =====
-const GOAL = 20;
+const GOAL = 40;          // マス数を40に
 const MAX_PLAYERS = 5;
 
-// ===== ゲーム状態（サーバーだけが持つ正式なデータ）=====
-let players = [];        // { id, name, pos, isCPU }
+// ===== ゲーム状態 =====
+let players = [];         // { id, name, pos, isCPU, rank }
 let currentTurn = 0;
 let started = false;
-let winner = null;
-let lastDice = null;        // 直前に出た目（全員のルーレット演出用）
-let lastRolledIndex = null; // 直前に回した人
+let finished = false;     // 全員ゴールしたら true
+let lastDice = null;
+let lastRolledIndex = null;
+let finishedCount = 0;    // 何人ゴールしたか（順位用）
 
 function broadcastState() {
   io.emit("state", {
-    players, currentTurn, started, winner,
+    players, currentTurn, started, finished,
     goal: GOAL, lastDice, lastRolledIndex,
   });
 }
@@ -34,39 +34,62 @@ function broadcastState() {
 function startGame() {
   while (players.length < MAX_PLAYERS) {
     const i = players.length;
-    players.push({ id: "cpu-" + i, name: "CPU" + i, pos: 0, isCPU: true });
+    players.push({ id: "cpu-" + i, name: "CPU" + (i + 1), pos: 0, isCPU: true, rank: 0 });
   }
   started = true;
+  finished = false;
   currentTurn = 0;
-  winner = null;
   lastDice = null;
   lastRolledIndex = null;
+  finishedCount = 0;
   broadcastState();
   maybeRunCPU();
 }
 
+// 次の「まだゴールしていない人」に手番を移す
+function advanceTurn() {
+  for (let i = 1; i <= players.length; i++) {
+    const next = (currentTurn + i) % players.length;
+    if (players[next].rank === 0) { // まだゴールしていない
+      currentTurn = next;
+      return;
+    }
+  }
+}
+
 function rollDice() {
-  if (!started || winner) return;
+  if (!started || finished) return;
   const player = players[currentTurn];
+  if (player.rank !== 0) { advanceTurn(); maybeRunCPU(); return; } // ゴール済みは飛ばす
+
   const dice = Math.floor(Math.random() * 10) + 1; // 1〜10
   lastDice = dice;
   lastRolledIndex = currentTurn;
   player.pos += dice;
+
   if (player.pos >= GOAL) {
     player.pos = GOAL;
-    winner = player.name;
-  } else {
-    currentTurn = (currentTurn + 1) % players.length;
+    finishedCount += 1;
+    player.rank = finishedCount; // 何位でゴールしたか
   }
+
+  // 全員ゴールしたか？
+  if (players.every((p) => p.rank > 0)) {
+    finished = true;
+    broadcastState();
+    return;
+  }
+
+  advanceTurn();
   broadcastState();
   maybeRunCPU();
 }
 
 function maybeRunCPU() {
-  if (!started || winner) return;
+  if (!started || finished) return;
   if (players[currentTurn].isCPU) {
-    // ルーレットの回転（約4秒）が終わるのを待ってから次を回す
-    setTimeout(rollDice, 5000);
+    // コマが1歩ずつ進む演出の時間も考え、長めに待つ
+    setTimeout(rollDice, 6500);
   }
 }
 
@@ -81,17 +104,27 @@ io.on("connection", (socket) => {
     name: "Player" + (players.length + 1),
     pos: 0,
     isCPU: false,
+    rank: 0,
   };
   players.push(player);
   socket.emit("joined", player.id);
   broadcastState();
+
+  // 名前を受け取って反映
+  socket.on("setName", (name) => {
+    const p = players.find((x) => x.id === socket.id);
+    if (p && !started) {
+      p.name = String(name).slice(0, 12) || p.name; // 12文字まで
+      broadcastState();
+    }
+  });
 
   socket.on("start", () => {
     if (!started) startGame();
   });
 
   socket.on("roll", () => {
-    if (!started || winner) return;
+    if (!started || finished) return;
     if (players[currentTurn].id === socket.id) rollDice();
   });
 
@@ -101,17 +134,18 @@ io.on("connection", (socket) => {
       p.isCPU = true;
       p.name = p.name.replace("(CPU)", "") + "(CPU)";
     }
-    // 人間が誰もいなくなったら全部リセット（次の人が遊べるように）
     if (players.filter((x) => !x.isCPU).length === 0) {
       players = [];
       started = false;
-      winner = null;
+      finished = false;
       currentTurn = 0;
       lastDice = null;
       lastRolledIndex = null;
+      finishedCount = 0;
+    } else if (started && players[currentTurn] && players[currentTurn].isCPU) {
+      maybeRunCPU();
     }
     broadcastState();
-    maybeRunCPU();
   });
 });
 
