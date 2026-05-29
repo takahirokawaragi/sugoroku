@@ -28,20 +28,39 @@
     }
     button:disabled { background: #bbb; cursor: not-allowed; }
     #status { font-size: 18px; margin: 10px; min-height: 26px; font-weight: bold; }
-    #players { font-size: 13px; color: #555; }
+    #players { font-size: 13px; color: #555; margin-bottom: 10px; }
+
+    /* ===== ルーレット ===== */
+    #rouletteWrap { position: relative; width: 220px; height: 220px; margin: 16px auto; }
+    /* 針（上に固定の三角） */
+    #pointer {
+      position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+      width: 0; height: 0; border-left: 12px solid transparent;
+      border-right: 12px solid transparent; border-top: 22px solid #c0392b; z-index: 2;
+    }
+    /* 回る円盤 */
+    #wheel {
+      width: 220px; height: 220px; border-radius: 50%;
+      border: 4px solid #333; transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99);
+    }
   </style>
 </head>
 <body>
   <h1>みんなですごろく</h1>
   <div id="status">接続中...</div>
+  <div id="players"></div>
+
+  <div id="rouletteWrap">
+    <div id="pointer"></div>
+    <canvas id="wheel" width="220" height="220"></canvas>
+  </div>
+
   <div id="board"></div>
   <div>
     <button id="startBtn">ゲーム開始</button>
-    <button id="rollBtn" disabled>サイコロを振る</button>
+    <button id="rollBtn" disabled>ルーレットを回す</button>
   </div>
-  <div id="players"></div>
 
-  <!-- Socket.IOのクライアント。サーバーと同じ場所から自動で読み込まれます -->
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js"></script>
 </body>

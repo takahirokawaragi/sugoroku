@@ -21,9 +21,14 @@ let players = [];        // { id, name, pos, isCPU }
 let currentTurn = 0;
 let started = false;
 let winner = null;
+let lastDice = null;        // 直前に出た目（全員のルーレット演出用）
+let lastRolledIndex = null; // 直前に回した人
 
 function broadcastState() {
-  io.emit("state", { players, currentTurn, started, winner, goal: GOAL });
+  io.emit("state", {
+    players, currentTurn, started, winner,
+    goal: GOAL, lastDice, lastRolledIndex,
+  });
 }
 
 function startGame() {
@@ -34,6 +39,8 @@ function startGame() {
   started = true;
   currentTurn = 0;
   winner = null;
+  lastDice = null;
+  lastRolledIndex = null;
   broadcastState();
   maybeRunCPU();
 }
@@ -41,8 +48,9 @@ function startGame() {
 function rollDice() {
   if (!started || winner) return;
   const player = players[currentTurn];
-  const dice = Math.floor(Math.random() * 6) + 1;
-  player.lastDice = dice;
+  const dice = Math.floor(Math.random() * 10) + 1; // 1〜10
+  lastDice = dice;
+  lastRolledIndex = currentTurn;
   player.pos += dice;
   if (player.pos >= GOAL) {
     player.pos = GOAL;
@@ -57,7 +65,8 @@ function rollDice() {
 function maybeRunCPU() {
   if (!started || winner) return;
   if (players[currentTurn].isCPU) {
-    setTimeout(rollDice, 1200);
+    // ルーレットの回転（約4秒）が終わるのを待ってから次を回す
+    setTimeout(rollDice, 5000);
   }
 }
 
@@ -98,6 +107,8 @@ io.on("connection", (socket) => {
       started = false;
       winner = null;
       currentTurn = 0;
+      lastDice = null;
+      lastRolledIndex = null;
     }
     broadcastState();
     maybeRunCPU();
