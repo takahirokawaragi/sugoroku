@@ -1,14 +1,17 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.0
+   バージョン: v1.1
    日付: 2026-05-29
    このファイル: ブラウザ側（画面表示・ルーレット演出・音）
+   v1.1での変更点:
+     - ルーレットの止まる位置を「毎回ゼロから計算」してズレを修正
+       （足し算の積み重ねをやめた）
    v1.0での変更点:
-     - サーバーの moves(seq番号つき) を順番に1つずつ演出する方式に変更
-     - 「ルーレットが止まってからコマが進む」流れを徹底
+     - サーバーの moves(seq番号つき) を順番に1つずつ演出する方式
+     - 「ルーレットが止まってからコマが進む」流れ
      - 順番の逆転・1周でのフリーズを解消
      - ルーレットの見た目と音は前のバージョンのまま
-   ※ server.js も同じ v1.0 とセットで使うこと
+   ※ server.js も v1.0 とセットで使うこと（server側は変更なし）
    ========================================================= */
 
 const socket = io();
@@ -149,8 +152,10 @@ function spinTo(dice, onStop) {
   ensureAudio();
   startTicking();
   const seg = 360 / SEGMENTS;
-  const targetAngle = 360 * 5 + (360 - (dice - 1) * seg - seg / 2);
-  currentRotation += targetAngle;
+  // その数字の区画の中央が「真上(矢印)」に来る角度を、毎回ゼロから計算する。
+  // 数字は真上から時計回りに 1,2,3... と並んでいる。
+  const targetCenter = (dice - 1) * seg + seg / 2;
+  currentRotation = 360 * 5 - targetCenter;
   wheel.style.transform = `rotate(${currentRotation}deg)`;
   setTimeout(() => {
     stopTicking();
@@ -179,10 +184,8 @@ function processNextMove() {
   if (animating) return;
   if (!latestState) return;
   const moves = latestState.moves || [];
-  // まだ見せていない、いちばん古い move を探す
   const next = moves.find((m) => m.seq === lastShownSeq + 1);
   if (!next) {
-    // もう演出するものがない → 最新状態をそのまま表示して終わり
     finalizeState(latestState);
     return;
   }
@@ -191,16 +194,13 @@ function processNextMove() {
   rollBtn.disabled = true;
   statusEl.textContent = next.name + " がルーレットを回しています...";
 
-  // まず古い位置（from）で盤面を描く
   drawBoardWithOverride(next.index, next.from);
 
-  // ルーレットを回す → 止まったらコマを進める
   spinTo(next.dice, () => {
     statusEl.textContent = next.name + " が " + next.dice + " を出しました";
     animateSteps(next.index, next.from, next.to, () => {
       lastShownSeq = next.seq;
       animating = false;
-      // 次の move があれば続けて演出
       processNextMove();
     });
   });
@@ -225,11 +225,9 @@ socket.on("state", (state) => {
   goal = state.goal;
   latestState = state;
 
-  // ゲーム前 or 終了は、すぐ表示を更新
   if (!state.started || state.finished) {
     finalizeState(state);
   }
-  // 演出すべき move があれば順番に演出する
   processNextMove();
 });
 
@@ -272,7 +270,6 @@ function placePawns(cells, positions) {
   });
 }
 
-// すでに演出し終えた手の位置を計算して返す（lastShownSeq までを反映した位置）
 function positionsUpToShown() {
   const pos = {};
   latestState.players.forEach((p, i) => { pos[i] = 0; });
@@ -283,7 +280,6 @@ function positionsUpToShown() {
   return pos;
 }
 
-// 通常描画（演出し終えた位置で描く）
 function drawBoard() {
   boardEl.innerHTML = "";
   const cells = [];
@@ -295,7 +291,6 @@ function drawBoard() {
   placePawns(cells, positionsUpToShown());
 }
 
-// 1人だけ途中位置で描く（アニメ用）
 function drawBoardWithOverride(overrideIdx, overridePos) {
   boardEl.innerHTML = "";
   const cells = [];
@@ -309,7 +304,6 @@ function drawBoardWithOverride(overrideIdx, overridePos) {
   placePawns(cells, pos);
 }
 
-// ===== 演出が全部終わったときの最終表示 =====
 function finalizeState(state) {
   drawBoard();
 
