@@ -1,17 +1,18 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.1
+   バージョン: v1.2
    日付: 2026-05-29
    このファイル: ブラウザ側（画面表示・ルーレット演出・音）
+   v1.2での変更点:
+     - ルーレットが「必ず右回りで何回転もしてから」止まるように修正
+       （数字がピタッと合う向きは v1.1 のまま維持）
    v1.1での変更点:
-     - ルーレットの止まる位置を「毎回ゼロから計算」してズレを修正
-       （足し算の積み重ねをやめた）
+     - ルーレットの止まる位置を毎回ゼロから計算してズレを修正
    v1.0での変更点:
      - サーバーの moves(seq番号つき) を順番に1つずつ演出する方式
      - 「ルーレットが止まってからコマが進む」流れ
      - 順番の逆転・1周でのフリーズを解消
-     - ルーレットの見た目と音は前のバージョンのまま
-   ※ server.js も v1.0 とセットで使うこと（server側は変更なし）
+   ※ server.js は v1.0 のままでOK（server側は変更なし）
    ========================================================= */
 
 const socket = io();
@@ -30,9 +31,9 @@ let currentRotation = 0;
 let lastWinnerShown = false;
 
 // ===== 演出の管理 =====
-let lastShownSeq = 0;      // どの seq まで演出し終えたか
-let animating = false;     // 今、演出中か
-let latestState = null;    // 最新のサーバー状態を覚えておく
+let lastShownSeq = 0;
+let animating = false;
+let latestState = null;
 
 const boardEl = document.getElementById("board");
 const statusEl = document.getElementById("status");
@@ -152,10 +153,20 @@ function spinTo(dice, onStop) {
   ensureAudio();
   startTicking();
   const seg = 360 / SEGMENTS;
-  // その数字の区画の中央が「真上(矢印)」に来る角度を、毎回ゼロから計算する。
-  // 数字は真上から時計回りに 1,2,3... と並んでいる。
+  // その数字の中央が真上に来る「最終的な向き」（0〜360度）
   const targetCenter = (dice - 1) * seg + seg / 2;
-  currentRotation = 360 * 5 - targetCenter;
+  const finalFacing = (360 - targetCenter) % 360;
+
+  // 今の回転角を 0〜360 に直した「現在の向き」
+  const currentFacing = ((currentRotation % 360) + 360) % 360;
+
+  // 現在の向きから、必ず右回り(プラス方向)で finalFacing に到達する差分
+  let delta = finalFacing - currentFacing;
+  if (delta < 0) delta += 360;
+
+  // それに5回転ぶんを上乗せして、勢いよく回す
+  currentRotation += delta + 360 * 5;
+
   wheel.style.transform = `rotate(${currentRotation}deg)`;
   setTimeout(() => {
     stopTicking();
@@ -164,7 +175,7 @@ function spinTo(dice, onStop) {
   }, 4000);
 }
 
-// ===== コマを1歩ずつ進める（指定の位置を上書きして描く）=====
+// ===== コマを1歩ずつ進める =====
 function animateSteps(playerIndex, from, to, onDone) {
   let current = from;
   const stepOnce = () => {
@@ -179,7 +190,7 @@ function animateSteps(playerIndex, from, to, onDone) {
   stepOnce();
 }
 
-// ===== 演出のメイン：まだ見せていない move を順番に1つずつ =====
+// ===== 演出のメイン =====
 function processNextMove() {
   if (animating) return;
   if (!latestState) return;
