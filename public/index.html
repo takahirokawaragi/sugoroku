@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>すごろく</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 16px; }
+    h1 { margin: 12px; font-size: 22px; }
+    #board {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: 4px; max-width: 640px; margin: 16px auto;
+    }
+    .cell {
+      aspect-ratio: 1; background: #fff; border: 1px solid #ccc;
+      border-radius: 6px; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; font-size: 10px; position: relative;
+    }
+    .cell .num { color: #999; }
+    .cell.start { background: #d5f5e3; }
+    .cell.goal { background: #fdebd0; }
+    .pawns { display: flex; flex-wrap: wrap; justify-content: center; gap: 1px; }
+    .pawn { width: 12px; height: 12px; border-radius: 50%; }
+    button {
+      font-size: 16px; padding: 10px 24px; margin: 6px; border: none;
+      border-radius: 6px; cursor: pointer; background: #3498db; color: #fff;
+    }
+    button:disabled { background: #bbb; cursor: not-allowed; }
+    #status { font-size: 18px; margin: 10px; min-height: 26px; font-weight: bold; }
+    #players { font-size: 13px; color: #555; }
+  </style>
+</head>
+<body>
+  <h1>みんなですごろく</h1>
+  <div id="status">接続中...</div>
+  <div id="board"></div>
+  <div>
+    <button id="startBtn">ゲーム開始</button>
+    <button id="rollBtn" disabled>サイコロを振る</button>
+  </div>
+  <div id="players"></div>
+
+  <!-- Socket.IOのクライアント。サーバーと同じ場所から自動で読み込まれます -->
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js"></script>
+</body>
+</html>
