@@ -1,12 +1,11 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v1.6
+   バージョン: v1.7
    日付: 2026-06-12
-   このファイル: サーバー側（ゲームの進行・順番・位置の管理）
-   v1.6での変更点:
-     - リセット機能を追加（reset イベントで最初の状態に戻す）
-   v1.5: ローマ字追加, v1.4: 漢字+ひらがな, v1.3: 38駅化 ほか
-   ※ client.js / index.html も v1.6 とセットで使うこと
+   v1.7での変更点:
+     - リセットを確実に初期化（誰かが勝手に始まらないように）
+   v1.6: リセット/ファンファーレ ほか、v1.5以前: 駅名表示など
+   ※ client.js / index.html も v1.7 とセットで使うこと
    ========================================================= */
 
 const express = require("express");
@@ -21,7 +20,6 @@ const io = new Server(server);
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/health", (req, res) => res.send("ok"));
 
-// ===== 駅名リスト（栗山スタート → 小樽ゴール、全38駅）=====
 const STATIONS = [
   { kanji: "栗山", kana: "くりやま", romaji: "Kuriyama" },
   { kanji: "由仁", kana: "ゆに", romaji: "Yuni" },
@@ -63,7 +61,7 @@ const STATIONS = [
   { kanji: "小樽", kana: "おたる", romaji: "Otaru" },
 ];
 
-const GOAL = STATIONS.length - 1; // = 37
+const GOAL = STATIONS.length - 1;
 const MAX_PLAYERS = 5;
 
 let players = [];
@@ -71,7 +69,6 @@ let currentTurn = 0;
 let started = false;
 let finished = false;
 let finishedCount = 0;
-
 let moves = [];
 let seqCounter = 0;
 
@@ -82,7 +79,7 @@ function broadcastState() {
   });
 }
 
-// ===== 最初の状態に戻す（リセット）=====
+// リセット：全部まっさらにして、各ブラウザに「再読み込みして」と伝える
 function resetGame() {
   players = [];
   currentTurn = 0;
@@ -91,8 +88,7 @@ function resetGame() {
   finishedCount = 0;
   moves = [];
   seqCounter = 0;
-  io.emit("resetDone"); // client に「リセットしたよ」と知らせる
-  broadcastState();
+  io.emit("forceReload"); // 全員のブラウザを最初から入り直させる
 }
 
 function startGame() {
@@ -113,10 +109,7 @@ function startGame() {
 function advanceTurn() {
   for (let i = 1; i <= players.length; i++) {
     const next = (currentTurn + i) % players.length;
-    if (players[next].rank === 0) {
-      currentTurn = next;
-      return;
-    }
+    if (players[next].rank === 0) { currentTurn = next; return; }
   }
 }
 
@@ -152,9 +145,7 @@ function rollDice() {
 
 function maybeRunCPU() {
   if (!started || finished) return;
-  if (players[currentTurn].isCPU) {
-    setTimeout(rollDice, 6500);
-  }
+  if (players[currentTurn].isCPU) setTimeout(rollDice, 6500);
 }
 
 io.on("connection", (socket) => {
@@ -164,11 +155,8 @@ io.on("connection", (socket) => {
   }
 
   const player = {
-    id: socket.id,
-    name: "Player" + (players.length + 1),
-    pos: 0,
-    isCPU: false,
-    rank: 0,
+    id: socket.id, name: "Player" + (players.length + 1),
+    pos: 0, isCPU: false, rank: 0,
   };
   players.push(player);
   socket.emit("joined", player.id);
@@ -189,7 +177,6 @@ io.on("connection", (socket) => {
     if (players[currentTurn].id === socket.id) rollDice();
   });
 
-  // ===== リセット（誰でも押せる。ゲーム終了後に使う想定）=====
   socket.on("reset", () => { resetGame(); });
 
   socket.on("disconnect", () => {
@@ -199,13 +186,8 @@ io.on("connection", (socket) => {
       p.name = p.name.replace("(CPU)", "") + "(CPU)";
     }
     if (players.filter((x) => !x.isCPU).length === 0) {
-      players = [];
-      started = false;
-      finished = false;
-      currentTurn = 0;
-      finishedCount = 0;
-      moves = [];
-      seqCounter = 0;
+      players = []; started = false; finished = false;
+      currentTurn = 0; finishedCount = 0; moves = []; seqCounter = 0;
     } else if (started && players[currentTurn] && players[currentTurn].isCPU) {
       maybeRunCPU();
     }

@@ -1,15 +1,13 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.6
+   バージョン: v1.7
    日付: 2026-06-12
-   このファイル: ブラウザ側（画面表示・ルーレット演出・音）
-   v1.6での変更点:
-     - リセットボタン対応（reset送信 / resetDone受信）
-     - ゴール時のファンファーレを豪華に
-     - 全員ゴールの結果は「最後のコマが小樽に着いてから」表示
-     - コマを電車の形（進行方向＝右向き）で描く
-   v1.5: ローマ字, v1.4: 漢字+ひらがな ほか
-   ※ server.js / index.html も v1.6 とセットで使うこと
+   v1.7での変更点:
+     - 1人がゴールするたびにファンファーレを鳴らす
+     - リセット時はブラウザを自動再読み込み（最初の名前入力に戻る）
+     - 電車コマは駅名標の下の専用スペースに置く（レイアウトずれ防止）
+   v1.6: リセット/ファンファーレ/電車コマ ほか
+   ※ server.js / index.html も v1.7 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -25,7 +23,9 @@ let myId = null;
 let goal = 37;
 let stations = [];
 let currentRotation = 0;
-let lastWinnerShown = false;
+
+// どのプレイヤーのゴールまでファンファーレを鳴らしたか（index の集合）
+let fanfaredIndexes = {};
 
 let lastShownSeq = 0;
 let animating = false;
@@ -78,22 +78,21 @@ function stopSound() {
 }
 function stepSound() { beep(1200, 60, "square", 0.2); }
 
-// ===== ファンファーレ（ゴール時・豪華版）=====
+// ===== ファンファーレ =====
 function fanfare() {
   ensureAudio();
-  // タッタッタッ ターン！という感じの音階
   const seq = [
-    { f: 523, t: 0,   d: 140 },  // ド
-    { f: 523, t: 160, d: 140 },  // ド
-    { f: 523, t: 320, d: 140 },  // ド
-    { f: 659, t: 480, d: 260 },  // ミ（のばす）
-    { f: 784, t: 760, d: 260 },  // ソ
-    { f: 1047, t: 1040, d: 520 } // 高いド（フィナーレ）
+    { f: 523, t: 0,   d: 140 },
+    { f: 523, t: 160, d: 140 },
+    { f: 523, t: 320, d: 140 },
+    { f: 659, t: 480, d: 260 },
+    { f: 784, t: 760, d: 260 },
+    { f: 1047, t: 1040, d: 520 }
   ];
   seq.forEach((n) => {
     setTimeout(() => {
       beep(n.f, n.d, "triangle", 0.32);
-      beep(n.f * 1.5, n.d, "square", 0.10); // 重ねて華やかに
+      beep(n.f * 1.5, n.d, "square", 0.10);
     }, n.t);
   });
 }
@@ -161,7 +160,7 @@ function drawWheel() {
 }
 drawWheel();
 
-// ===== ルーレットを回す → 止まったら onStop =====
+// ===== ルーレットを回す =====
 function spinTo(dice, onStop) {
   ensureAudio();
   startTicking();
@@ -180,7 +179,7 @@ function spinTo(dice, onStop) {
   }, 4000);
 }
 
-// ===== 駅名の取り出し =====
+// ===== 駅名 =====
 function stKanji(i) { const s = stations[i]; return s ? (s.kanji || String(i)) : String(i); }
 function stKana(i)  { const s = stations[i]; return s ? (s.kana || "") : ""; }
 function stRomaji(i){ const s = stations[i]; return s ? (s.romaji || "") : ""; }
@@ -221,6 +220,12 @@ function processNextMove() {
     statusEl.textContent = next.name + " が " + next.dice + " を出して「" + stKanji(next.to) + "」へ";
     animateSteps(next.index, next.from, next.to, () => {
       lastShownSeq = next.seq;
+      // このプレイヤーが小樽(ゴール)に着いたら、その都度ファンファーレ
+      if (next.to >= goal && !fanfaredIndexes[next.index]) {
+        fanfaredIndexes[next.index] = true;
+        statusEl.textContent = next.name + " が小樽にゴール！";
+        fanfare();
+      }
       animating = false;
       processNextMove();
     });
@@ -247,12 +252,9 @@ socket.on("rejected", (msg) => {
   startBtn.disabled = true; rollBtn.disabled = true;
 });
 
-// リセットされたら、こちらの演出記録も初期化する
-socket.on("resetDone", () => {
-  lastShownSeq = 0;
-  animating = false;
-  lastWinnerShown = false;
-  resultEl.textContent = "";
+// リセットされたら、全ブラウザを再読み込みして最初からやり直す
+socket.on("forceReload", () => {
+  location.reload();
 });
 
 socket.on("state", (state) => {
@@ -266,22 +268,26 @@ socket.on("state", (state) => {
   processNextMove();
 });
 
-// ===== 盤面描画（駅名標ふう3段 ＋ 電車コマ）=====
+// ===== 盤面描画 =====
 function buildCell(i) {
   const cell = document.createElement("div");
   cell.className = "cell";
   if (i === 0) cell.classList.add("start");
   if (i === goal) cell.classList.add("goal");
 
+  // 駅名標の部分（常に同じ並び：漢字→ひらがな→ローマ字帯）
+  const sign = document.createElement("div");
+  sign.className = "stSign";
+
   const kanji = document.createElement("div");
   kanji.className = "stKanji";
   kanji.textContent = stKanji(i);
-  cell.appendChild(kanji);
+  sign.appendChild(kanji);
 
   const kana = document.createElement("div");
   kana.className = "stKana";
   kana.textContent = stKana(i);
-  cell.appendChild(kana);
+  sign.appendChild(kana);
 
   const band = document.createElement("div");
   band.className = "stBand";
@@ -289,7 +295,14 @@ function buildCell(i) {
   romaji.className = "stRomaji";
   romaji.textContent = stRomaji(i);
   band.appendChild(romaji);
-  cell.appendChild(band);
+  sign.appendChild(band);
+
+  cell.appendChild(sign);
+
+  // 駅名標の下の「電車を置く専用スペース」（常にある）
+  const pawns = document.createElement("div");
+  pawns.className = "pawns";
+  cell.appendChild(pawns);
 
   if (i === 0 || i === goal) {
     const tag = document.createElement("div");
@@ -300,7 +313,6 @@ function buildCell(i) {
   return cell;
 }
 
-// 電車のコマ（HTMLで作る。色は車体の帯に使う。右向き＝進行方向）
 function makeTrain(colorIndex, name) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -308,7 +320,6 @@ function makeTrain(colorIndex, name) {
   const train = document.createElement("div");
   train.className = "train";
   train.style.setProperty("--bodyColor", COLORS[colorIndex]);
-  // 電車の中身（窓と帯）
   train.innerHTML =
     '<div class="trainBody">' +
       '<div class="trainBand"></div>' +
@@ -332,12 +343,8 @@ function placePawns(cells, positions) {
     const pos = positions[idx];
     const cell = cells[pos];
     if (!cell) return;
-    let pawnsEl = cell.querySelector(".pawns");
-    if (!pawnsEl) {
-      pawnsEl = document.createElement("div");
-      pawnsEl.className = "pawns";
-      cell.appendChild(pawnsEl);
-    }
+    const pawnsEl = cell.querySelector(".pawns");
+    if (!pawnsEl) return;
     pawnsEl.appendChild(makeTrain(idx, p.name));
   });
 }
@@ -385,7 +392,6 @@ function finalizeState(state) {
     })
     .join("　");
 
-  // 全員ゴール、かつ演出（コマ移動）が全部終わっているときだけ結果を出す
   const allMovesShown = !state.moves || state.moves.length === 0 ||
     state.moves[state.moves.length - 1].seq === lastShownSeq;
 
@@ -421,5 +427,4 @@ function showResult(state) {
   const ranked = [...state.players].filter(p => p.rank > 0).sort((a, b) => a.rank - b.rank);
   resultEl.textContent = "【結果】\n" +
     ranked.map(p => `${p.rank}位：${p.name}`).join("\n");
-  if (!lastWinnerShown) { lastWinnerShown = true; fanfare(); }
 }

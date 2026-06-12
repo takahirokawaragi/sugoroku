@@ -1,197 +1,226 @@
-<!DOCTYPE html>
-<!-- =========================================================
-     すごろくゲーム  index.html
-     バージョン: v1.6
+<!-- ============================================================
+     ファイル: public/index.html
+     バージョン: v1.7
      日付: 2026-06-12
-     v1.6での変更点:
-       - 看板を横長にして1段6列に（1マスを大きく、文字を読みやすく）
-       - ひらがなは2段折り返し可、長い駅名は自動縮小
-       - 電車コマ（銀色車体・色帯・窓・右向き・先頭丸み）をCSSで描画
-       - リセットボタンを追加（終了後に表示）
-     ========================================================= -->
+     変更点:
+       1) 駅の並びを画面の横幅に合わせて自動で列数を変える
+          （広い画面は1段に多く、スマホは少なく自動調整）
+       2) 駅名標は「漢字→ひらがな→ローマ字帯」の順で固定
+       3) 駅名標の下に電車専用スペースを必ず確保し、
+          電車の有無でレイアウトが崩れないようにした
+       4) リセットボタンはゲーム終了後のみ表示
+     ※ server.js v1.7 / client.js v1.7 とセットで使用
+     ============================================================ -->
+<!DOCTYPE html>
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>すごろく 栗山→小樽</title>
+  <title>みんなですごろく 〜栗山から小樽〜</title>
   <style>
-    body { font-family: sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 16px; }
-    h1 { margin: 12px; font-size: 22px; }
-
-    #nameArea { margin: 10px; }
-    #nameInput { font-size: 16px; padding: 8px; border-radius: 6px; border: 1px solid #aaa; width: 160px; }
-
-    /* 1段6列に（横長の看板にして数を減らす） */
-    #board {
-      display: grid;
-      grid-template-columns: repeat(6, 1fr);
-      gap: 8px; max-width: 760px; margin: 16px auto;
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Hiragino Kaku Gothic ProN", "メイリオ", sans-serif;
+      background: #eef3f8;
+      color: #222;
+      padding: 12px;
+    }
+    h1 {
+      font-size: 20px;
+      text-align: center;
+      margin: 6px 0 12px;
+      color: #1b3a5b;
     }
 
-    /* ===== 駅名標ふうのマス（横長） ===== */
-    .cell {
+    /* ===== 上部のコントロール ===== */
+    .topArea {
+      max-width: 920px;
+      margin: 0 auto 12px;
       background: #fff;
-      border: 2px solid #333;
-      border-radius: 5px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
-      display: flex; flex-direction: column;
-      align-items: center; justify-content: flex-start;
-      position: relative; overflow: hidden;
-      min-height: 78px; padding: 5px 4px 0;
+      border-radius: 10px;
+      padding: 12px;
+      box-shadow: 0 2px 6px rgba(0,0,0,.08);
     }
-    /* 漢字（一番上） */
-    .cell .stKanji {
-      color: #111; font-weight: bold; line-height: 1.05;
-      font-size: 15px; width: 100%;
-      white-space: nowrap; overflow: hidden;
-      transform-origin: center top;
+    .nameArea {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-bottom: 8px;
     }
-    /* ひらがな（その下・2段まで折り返し可） */
-    .cell .stKana {
-      color: #111; line-height: 1.05;
-      font-size: 11px; width: 100%; margin-top: 2px;
-      word-break: break-all;
+    #nameInput {
+      flex: 1 1 160px;
+      padding: 8px 10px;
+      font-size: 16px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
     }
-    /* 黄緑色の帯 */
-    .cell .stBand {
-      margin-top: auto; width: 100%;
-      background: #8bc63f;
-      border-top: 1px solid #6fa92e;
-      display: flex; align-items: center; justify-content: center;
-      min-height: 16px; padding: 1px 3px;
-    }
-    .cell .stBand .stRomaji {
-      color: #fff; font-size: 9px; line-height: 1.05;
-      white-space: nowrap; overflow: hidden;
-      transform-origin: center; width: 100%;
-    }
-    .cell .stTag {
-      position: absolute; top: 2px; right: 2px;
-      font-size: 8px; color: #fff; background: #e8231c;
-      border-radius: 2px; padding: 0 3px; font-weight: bold; z-index: 2;
-    }
-    .cell.start .stTag { background: #1c7a3f; }
-
-    /* コマ置き場 */
-    .pawns {
-      width: 100%; display: flex; flex-wrap: wrap;
-      justify-content: center; gap: 3px; margin: 3px 0 4px; z-index: 3;
-    }
-    .pawnWrap { display: flex; flex-direction: column; align-items: center; }
-    .pawnName { font-size: 8px; line-height: 1; color: #111; max-width: 54px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    /* ===== 電車のコマ（右向き＝進行方向） ===== */
-    .train {
-      --bodyColor: #e74c3c;
-      position: relative; width: 46px; height: 18px;
-    }
-    .trainBody {
-      position: relative;
-      width: 100%; height: 14px;
-      background: linear-gradient(#f5f5f5, #d9d9d9);
-      border: 1px solid #888;
-      /* 右側（進行方向）の先頭を丸める */
-      border-radius: 4px 9px 9px 4px;
-      overflow: hidden;
-    }
-    /* 車体中央を走る色の帯（プレイヤー色） */
-    .trainBand {
-      position: absolute; top: 6px; left: 0; right: 0; height: 3px;
-      background: var(--bodyColor);
-    }
-    /* 窓 */
-    .trainWindows {
-      position: absolute; top: 1.5px; left: 4px; right: 9px; height: 3.5px;
-      display: flex; gap: 1.5px;
-    }
-    .trainWindows span {
-      flex: 1; background: #aee2ff; border: 0.5px solid #7fb8d8; border-radius: 1px;
-    }
-    /* 先頭（右の運転席まわり） */
-    .trainFace {
-      position: absolute; top: 1.5px; right: 1.5px; width: 5px; height: 9px;
-      background: #cfeaff; border: 0.5px solid #7fb8d8; border-radius: 1px 4px 4px 1px;
-    }
-    /* 車輪 */
-    .trainWheels {
-      position: absolute; bottom: 0; left: 0; right: 0; height: 5px;
-      display: flex; justify-content: space-around; padding: 0 6px;
-    }
-    .trainWheels i {
-      display: block; width: 5px; height: 5px; border-radius: 50%;
-      background: #333;
-    }
-
     button {
-      font-size: 16px; padding: 10px 24px; margin: 6px; border: none;
-      border-radius: 6px; cursor: pointer; background: #3498db; color: #fff;
+      padding: 9px 16px;
+      font-size: 15px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: #2d6cb6;
+      color: #fff;
     }
-    button:disabled { background: #bbb; cursor: not-allowed; }
-    #resetBtn { background: #e67e22; }
-    #status { font-size: 18px; margin: 10px; min-height: 26px; font-weight: bold; }
-    #players { font-size: 13px; color: #555; margin-bottom: 10px; }
-    #result { font-size: 16px; color: #333; white-space: pre-line; margin: 10px; font-weight: bold; }
+    button:hover { background: #245a99; }
+    button:disabled { background: #9bb4cc; cursor: default; }
+    #resetBtn { background: #c0562b; }
+    #resetBtn:hover { background: #a3471f; }
+
+    #status {
+      font-size: 16px;
+      font-weight: bold;
+      margin: 6px 0;
+      color: #1b3a5b;
+    }
+    #players {
+      font-size: 14px;
+      line-height: 1.7;
+    }
 
     /* ===== ルーレット ===== */
-    #rouletteWrap { position: relative; width: 260px; height: 260px; margin: 16px auto; }
-    #pointer {
-      position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
-      width: 0; height: 0; border-left: 13px solid transparent;
-      border-right: 13px solid transparent; border-top: 26px solid #333; z-index: 2;
+    #rouletteWrap {
+      position: relative;
+      width: 260px;
+      height: 280px;
+      margin: 10px auto;
     }
-    #wheel { transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
+    #pointer {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0; height: 0;
+      border-left: 14px solid transparent;
+      border-right: 14px solid transparent;
+      border-top: 22px solid #111;
+      z-index: 5;
+    }
+    #wheel {
+      display: block;
+      margin: 18px auto 0;
+      transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
+    }
+
+    /* ===== 盤面 ===== */
+    #board {
+      max-width: 1100px;
+      margin: 0 auto;
+      display: grid;
+      /* 横幅に合わせて自動で列数が変わる（1マス最小150px） */
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 8px;
+      padding: 4px;
+    }
+
+    /* ===== 駅名標（看板）風セル ===== */
+    .cell {
+      background: #fff;
+      border: 2px solid #3a7d3a;
+      border-radius: 6px;
+      padding: 6px 4px 4px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 110px;
+      position: relative;
+    }
+    .cell.start { border-color: #c0562b; }
+    .cell.goal  { border-color: #d4a017; }
+
+    .cellKanji {
+      font-size: 17px;
+      font-weight: bold;
+      color: #111;
+      text-align: center;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+    .cellKana {
+      font-size: 12px;
+      color: #333;
+      text-align: center;
+      line-height: 1.2;
+      margin-top: 2px;
+      /* 長い読みは2段で折り返す */
+      white-space: normal;
+      word-break: break-all;
+    }
+    .cellRomaji {
+      margin-top: 4px;
+      width: 100%;
+      background: #8cc63f;        /* 黄緑の帯 */
+      color: #fff;
+      font-size: 11px;
+      letter-spacing: .5px;
+      text-align: center;
+      border-radius: 3px;
+      padding: 2px 0;
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+    }
+
+    /* 電車専用スペース：駅名標の下に必ず確保（電車の有無に関係なく一定の高さ） */
+    .pawnWrap {
+      width: 100%;
+      min-height: 30px;
+      margin-top: 5px;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 3px;
+      justify-content: center;
+      align-items: center;
+    }
+
+    /* ===== 結果表示 ===== */
+    #result {
+      max-width: 920px;
+      margin: 14px auto;
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 15px;
+      line-height: 1.8;
+      box-shadow: 0 2px 6px rgba(0,0,0,.08);
+      display: none;
+    }
+    #result.show { display: block; }
+    #result h2 { margin: 0 0 8px; font-size: 18px; color: #1b3a5b; }
   </style>
 </head>
 <body>
-  <h1>すごろく 栗山 → 小樽</h1>
+  <h1>みんなですごろく 〜栗山から小樽〜</h1>
 
-  <div id="nameArea">
-    <input id="nameInput" type="text" placeholder="名前を入力" maxlength="12" />
-    <button id="nameBtn">名前を決定</button>
-  </div>
+  <div class="topArea">
+    <div class="nameArea">
+      <input id="nameInput" type="text" maxlength="12" placeholder="名前を入力" />
+      <button id="nameBtn">名前を決定</button>
+    </div>
+    <div id="status">接続中...</div>
+    <div id="players"></div>
 
-  <div id="status">接続中...</div>
-  <div id="players"></div>
+    <div id="rouletteWrap">
+      <div id="pointer"></div>
+      <canvas id="wheel" width="260" height="260"></canvas>
+    </div>
 
-  <div id="rouletteWrap">
-    <div id="pointer"></div>
-    <canvas id="wheel" width="260" height="260"></canvas>
+    <div style="text-align:center; margin-top:8px;">
+      <button id="startBtn">ゲーム開始</button>
+      <button id="rollBtn">ルーレットを回す</button>
+      <button id="resetBtn" style="display:none;">もう一度遊ぶ</button>
+    </div>
   </div>
 
   <div id="board"></div>
-  <div>
-    <button id="startBtn">ゲーム開始</button>
-    <button id="rollBtn" disabled>ルーレットを回す</button>
-    <button id="resetBtn" style="display:none">もう一度遊ぶ（リセット）</button>
-  </div>
 
   <div id="result"></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script>
-    // 漢字・ローマ字がマス幅からはみ出すとき、横に自動で縮める
-    // （ひらがなは2段折り返しOKなので縮めない）
-    function fitOne(el) {
-      if (!el) return;
-      el.style.transform = "scaleX(1)";
-      const parentW = el.parentElement.clientWidth - 6;
-      const textW = el.scrollWidth;
-      if (textW > parentW && textW > 0) {
-        const scale = Math.max(0.4, parentW / textW);
-        el.style.transform = "scaleX(" + scale + ")";
-      }
-    }
-    function fitStationLabels() {
-      document.querySelectorAll("#board .cell").forEach((cell) => {
-        fitOne(cell.querySelector(".stKanji"));
-        fitOne(cell.querySelector(".stRomaji"));
-      });
-    }
-    const boardObserverTarget = document.getElementById("board");
-    const mo = new MutationObserver(() => { fitStationLabels(); });
-    mo.observe(boardObserverTarget, { childList: true, subtree: true });
-    window.addEventListener("resize", fitStationLabels);
-  </script>
   <script src="/client.js"></script>
 </body>
 </html>
