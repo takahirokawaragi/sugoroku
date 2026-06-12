@@ -1,12 +1,14 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v2.1
+   バージョン: v2.2
    日付: 2026-06-12
-   v2.1での変更点:
-     - リセット後に配り直される新しい joined(新ID) を確実に受け取り、
-       myId を更新／盤面・状態を初期化（再読み込み不要で再開できる）
-   v2.0: resetDoneで名前欄クリア・全ボタン音 ほか
-   ※ server.js も v2.1 とセットで使うこと
+   v2.2での変更点:
+     - リセット時、自分のソケットを再接続して新IDを確実に取得
+       （リセット後にゲームが始まらない不具合を解消）
+     - iPhone対策：画面復帰時/操作時に AudioContext を resume() で復活
+     - 電車コマを721系風デフォルメに作り替え（横長・大窓多数・下部緑帯・角型先頭）
+     - 自分のコマがある駅へ盤面を自動スクロール
+   ※ server.js / index.html も v2.2 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -46,7 +48,20 @@ resetBtn.style.display = "";
 let audioCtx = null;
 function ensureAudio() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  // iPhone等：停止状態なら起こし直す
+  if (audioCtx.state === "suspended") audioCtx.resume();
 }
+// 画面に戻ってきたとき（iPhoneでホームから戻る等）に音を復活
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden && audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+});
+window.addEventListener("focus", () => {
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+});
+window.addEventListener("pageshow", () => {
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume();
+});
+
 function beep(freq, durationMs, type = "square", volume = 0.2) {
   if (!audioCtx) return;
   const osc = audioCtx.createOscillator();
@@ -189,14 +204,24 @@ function stKanji(i) { const s = stations[i]; return s ? (s.kanji || String(i)) :
 function stKana(i)  { const s = stations[i]; return s ? (s.kana || "") : ""; }
 function stRomaji(i){ const s = stations[i]; return s ? (s.romaji || "") : ""; }
 
+// ===== 自分のコマがある駅へ自動スクロール =====
+function scrollToMyPawn(pos) {
+  const cell = boardEl.children[pos];
+  if (!cell) return;
+  cell.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
 // ===== コマを1歩ずつ進める =====
 function animateSteps(playerIndex, from, to, onDone) {
   let current = from;
+  const myIndex = latestState ? latestState.players.findIndex(p => p.id === myId) : -1;
   const stepOnce = () => {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
     drawBoardWithOverride(playerIndex, current);
     stepSound();
+    // 動いているのが自分なら、その駅へスクロール
+    if (playerIndex === myIndex) scrollToMyPawn(current);
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
     setTimeout(stepOnce, 350);
   };
@@ -251,7 +276,6 @@ resetBtn.addEventListener("click", () => {
   }
 });
 
-// joined は最初の接続時にもリセット後にも届く。届くたびに myId を更新
 socket.on("joined", (id) => { myId = id; });
 
 socket.on("rejected", (msg) => {
@@ -259,8 +283,8 @@ socket.on("rejected", (msg) => {
   startBtn.disabled = true; rollBtn.disabled = true;
 });
 
-// リセット完了：名前欄を空にして演出状態と画面を初期化
-socket.on("resetDone", () => {
+// リセット完了：自分で繋ぎ直して新IDをもらう（これが一番確実）
+socket.on("resetReady", () => {
   nameInput.value = "";
   lastShownSeq = 0;
   animating = false;
@@ -268,9 +292,12 @@ socket.on("resetDone", () => {
   currentRotation = 0;
   wheel.style.transition = "none";
   wheel.style.transform = "rotate(0deg)";
-  // 次の回転で再びアニメが効くように戻す
   setTimeout(() => { wheel.style.transition = ""; }, 50);
   resultEl.classList.remove("show");
+  myId = null;
+  // ソケットを繋ぎ直す → 新しい joined が必ず届く
+  socket.disconnect();
+  setTimeout(() => { socket.connect(); }, 300);
 });
 
 socket.on("state", (state) => {
@@ -336,6 +363,7 @@ function buildCell(i) {
   return cell;
 }
 
+// 721系風デフォルメ電車（横長・大窓多数・下部に緑帯・角型先頭／右向き）
 function makeTrain(colorIndex, name) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -345,12 +373,15 @@ function makeTrain(colorIndex, name) {
   train.style.setProperty("--bandColor", COLORS[colorIndex]);
   train.innerHTML =
     '<div class="trainBody">' +
-      '<div class="trainWindows"><span></span><span></span><span></span><span></span></div>' +
+      '<div class="trainRoof"></div>' +
+      '<div class="trainWindows">' +
+        '<span class="door"></span><span></span><span></span><span></span>' +
+        '<span class="door"></span><span class="cab"></span>' +
+      '</div>' +
       '<div class="trainBand"></div>' +
-      '<div class="trainNose"></div>' +
-      '<div class="trainLight"></div>' +
     '</div>' +
-    '<div class="trainWheels"><i></i><i></i></div>';
+    '<div class="trainSkirt"></div>' +
+    '<div class="trainWheels"><i></i><i></i><i></i><i></i></div>';
 
   const nm = document.createElement("div");
   nm.className = "pawnName";
@@ -440,6 +471,10 @@ function finalizeState(state) {
     ? "あなたの番です！ルーレットを回してください"
     : (current ? current.name + " の番です..." : "");
   rollBtn.disabled = !myTurn || animating;
+
+  // 自分の駒の駅を表示（自分の番のとき）
+  const myIndex = state.players.findIndex(p => p.id === myId);
+  if (myIndex >= 0) scrollToMyPawn(state.players[myIndex].pos);
 }
 
 function showResult(state) {

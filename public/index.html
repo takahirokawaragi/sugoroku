@@ -1,14 +1,14 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v2.0
+     バージョン: v2.2
      日付: 2026-06-12
      変更点:
-       1) 駅名標(.stSign)の高さを全駅で固定し、縦幅を揃える
-          （サッポロビール庭園だけ高くなる不具合を解消）
-       2) ボタン表記「もう一度遊ぶ」→「リセット」
-       ※ ボタン音・リセット挙動は client.js / server.js v2.0 側で対応
-     v1.9: 長い駅名1段・721系風電車 ほか
-     ※ server.js v2.0 / client.js v2.0 とセットで使用
+       1) ルーレット＋操作ボタンを画面上部に固定(sticky)
+          → 盤面を下にスクロールしても常に見える
+       2) 電車コマを721系風デフォルメに作り替え
+          （屋根・大窓多数・ドア・運転台・下部色帯・スカート・4輪／右向き）
+       ※ 自動スクロール・iPhone音復活・リセット再接続は client.js v2.2 側
+     ※ server.js v2.2 / client.js v2.2 とセットで使用
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -23,22 +23,30 @@
       font-family: "Hiragino Kaku Gothic ProN", "メイリオ", sans-serif;
       background: #eef3f8;
       color: #222;
-      padding: 12px;
+      padding: 0 12px 12px;
     }
     h1 {
-      font-size: 20px;
+      font-size: 18px;
       text-align: center;
-      margin: 6px 0 12px;
+      margin: 8px 0;
       color: #1b3a5b;
     }
 
-    /* ===== 上部のコントロール ===== */
-    .topArea {
+    /* ===== 上部固定エリア（ルーレット＋操作）===== */
+    .stickyTop {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      background: #eef3f8;
+      padding: 6px 0 8px;
+      border-bottom: 2px solid #c9d6e4;
+    }
+    .topInner {
       max-width: 920px;
-      margin: 0 auto 12px;
+      margin: 0 auto;
       background: #fff;
       border-radius: 10px;
-      padding: 12px;
+      padding: 8px 12px 10px;
       box-shadow: 0 2px 6px rgba(0,0,0,.08);
     }
     .nameArea {
@@ -46,18 +54,18 @@
       gap: 8px;
       align-items: center;
       flex-wrap: wrap;
-      margin-bottom: 8px;
+      margin-bottom: 6px;
     }
     #nameInput {
       flex: 1 1 160px;
-      padding: 8px 10px;
+      padding: 7px 10px;
       font-size: 16px;
       border: 1px solid #bbb;
       border-radius: 6px;
     }
     button {
-      padding: 9px 16px;
-      font-size: 15px;
+      padding: 8px 14px;
+      font-size: 14px;
       border: none;
       border-radius: 6px;
       cursor: pointer;
@@ -70,19 +78,20 @@
     #resetBtn:hover { background: #a3471f; }
 
     #status {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: bold;
-      margin: 6px 0;
+      margin: 4px 0;
       color: #1b3a5b;
+      text-align: center;
     }
-    #players { font-size: 14px; line-height: 1.9; }
+    #players { font-size: 13px; line-height: 1.7; text-align: center; }
 
-    /* ===== ルーレット ===== */
+    /* ===== ルーレット（固定エリア内・少し小さめ）===== */
     #rouletteWrap {
       position: relative;
-      width: 260px;
-      height: 280px;
-      margin: 10px auto;
+      width: 180px;
+      height: 196px;
+      margin: 4px auto;
     }
     #pointer {
       position: absolute;
@@ -90,28 +99,30 @@
       left: 50%;
       transform: translateX(-50%);
       width: 0; height: 0;
-      border-left: 14px solid transparent;
-      border-right: 14px solid transparent;
-      border-top: 22px solid #111;
+      border-left: 11px solid transparent;
+      border-right: 11px solid transparent;
+      border-top: 18px solid #111;
       z-index: 5;
     }
     #wheel {
       display: block;
-      margin: 18px auto 0;
+      width: 180px;       /* canvasは260のまま、表示だけ縮小 */
+      height: 180px;
+      margin: 14px auto 0;
       transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
     }
+    .btnRow { text-align: center; margin-top: 4px; }
 
     /* ===== 盤面：横幅に合わせて列数が自動で変わる ===== */
     #board {
       max-width: 1200px;
-      margin: 0 auto;
+      margin: 10px auto 0;
       display: grid;
       grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
       gap: 8px;
       padding: 4px;
     }
 
-    /* ===== 1マス（駅）===== */
     .cell {
       background: #f7f7f7;
       border: 1px solid #cfcfcf;
@@ -138,7 +149,7 @@
     }
     .cell.goal .stTag { background: #d4a017; }
 
-    /* ===== 駅名標（看板）風：高さを固定して全駅そろえる ===== */
+    /* ===== 駅名標（高さ固定で揃える）===== */
     .stSign {
       background: #fff;
       border: 2px solid #2a6db0;
@@ -148,174 +159,104 @@
       flex-direction: column;
       align-items: center;
       justify-content: flex-start;
-      height: 62px;            /* ★ 全駅で固定 → 縦幅が揃う */
+      height: 62px;
       overflow: hidden;
     }
     .stKanji {
-      font-size: 16px;
-      font-weight: bold;
-      color: #111;
-      text-align: center;
-      line-height: 1.15;
-      word-break: break-all;
+      font-size: 16px; font-weight: bold; color: #111;
+      text-align: center; line-height: 1.15; word-break: break-all;
     }
     .stKana {
-      font-size: 11px;
-      color: #444;
-      text-align: center;
-      line-height: 1.25;
-      margin-top: 2px;
-      word-break: break-all;
+      font-size: 11px; color: #444; text-align: center;
+      line-height: 1.25; margin-top: 2px; word-break: break-all;
     }
     .stBand {
-      width: 100%;
-      background: #8cc63f;
-      border-radius: 3px;
-      margin-top: auto;        /* 帯は常に下端へ */
-      padding: 2px 2px 3px;
+      width: 100%; background: #8cc63f; border-radius: 3px;
+      margin-top: auto; padding: 2px 2px 3px;
     }
     .stRomaji {
-      font-size: 10px;
-      letter-spacing: .3px;
-      color: #fff;
-      text-align: center;
-      line-height: 1.2;
-      word-break: break-all;
+      font-size: 10px; letter-spacing: .3px; color: #fff;
+      text-align: center; line-height: 1.2; word-break: break-all;
     }
+    .cell.longName .stKanji { font-size: 11px; line-height: 1.1; white-space: nowrap; }
+    .cell.longName .stKana  { font-size: 8.5px; line-height: 1.1; white-space: nowrap; }
+    .cell.longName .stRomaji{ font-size: 8px; white-space: nowrap; }
 
-    /* ===== 長い駅名は文字を小さくして1段に収める ===== */
-    .cell.longName .stKanji {
-      font-size: 11px;
-      line-height: 1.1;
-      white-space: nowrap;
-    }
-    .cell.longName .stKana {
-      font-size: 8.5px;
-      line-height: 1.1;
-      white-space: nowrap;
-    }
-    .cell.longName .stRomaji {
-      font-size: 8px;
-      white-space: nowrap;
-    }
-
-    /* ===== 電車専用スペース ===== */
+    /* ===== 電車スペース ===== */
     .pawns {
-      min-height: 36px;
-      margin-top: 5px;
-      display: flex;
-      flex-direction: row;
-      flex-wrap: wrap;
-      gap: 4px;
-      justify-content: center;
-      align-items: flex-start;
+      min-height: 40px; margin-top: 5px;
+      display: flex; flex-direction: row; flex-wrap: wrap;
+      gap: 4px; justify-content: center; align-items: flex-start;
     }
     .pawnWrap {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      width: 44px;
+      display: flex; flex-direction: column; align-items: center; width: 56px;
     }
     .pawnName {
-      font-size: 9px;
-      color: #333;
-      text-align: center;
-      line-height: 1.1;
-      margin-top: 1px;
-      max-width: 44px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
+      font-size: 9px; color: #333; text-align: center; line-height: 1.1;
+      margin-top: 1px; max-width: 56px; overflow: hidden;
+      white-space: nowrap; text-overflow: ellipsis;
     }
 
-    /* ===== 電車コマ：JR北海道721系風デフォルメ（右向き）===== */
-    .train {
-      position: relative;
-      width: 42px;
-      height: 24px;
-    }
+    /* ===== 電車コマ：JR北海道721系風（右向き）===== */
+    .train { position: relative; width: 54px; height: 26px; }
+    /* 車体（銀色ステンレス）。右端=先頭を少しだけ角丸に */
     .train .trainBody {
       position: relative;
-      width: 42px;
-      height: 17px;
-      background: linear-gradient(#f4f6f8, #cdd3d8 55%, #aeb4ba);
+      width: 54px; height: 18px;
+      background: linear-gradient(#fbfcfd, #d7dce0 60%, #c2c8cd);
       border: 1px solid #8a9097;
-      border-radius: 4px 9px 4px 4px;
+      border-radius: 3px 5px 3px 3px;
       overflow: hidden;
     }
+    /* 屋根（上の濃いめのライン）*/
+    .train .trainRoof {
+      position: absolute; top: 0; left: 0; right: 0; height: 3px;
+      background: #9aa1a8;
+    }
+    /* 窓・ドアの並び（横一列）*/
     .train .trainWindows {
-      position: absolute;
-      top: 3px;
-      left: 5px;
-      display: flex;
-      gap: 2px;
-      z-index: 2;
+      position: absolute; top: 4px; left: 3px; right: 3px;
+      display: flex; gap: 1.5px; align-items: center;
     }
     .train .trainWindows span {
-      display: block;
-      width: 6px;
-      height: 5px;
-      background: #d4ecff;
-      border: 1px solid #aacbe6;
-      border-radius: 1px;
+      flex: 1; height: 7px;
+      background: #cfe9ff; border: 1px solid #a9cae6; border-radius: 1px;
     }
+    .train .trainWindows .door {
+      flex: 0 0 4px; height: 9px;
+      background: #b9c3cc; border: 1px solid #97a2ab; border-radius: 1px;
+    }
+    .train .trainWindows .cab {  /* 右端＝運転台の前面窓 */
+      flex: 0 0 6px; height: 7px;
+      background: #bfe0ff; border: 1px solid #9cc0e0;
+      border-radius: 1px 3px 1px 1px;
+    }
+    /* プレイヤー色の帯（車体下部）*/
     .train .trainBand {
-      position: absolute;
-      left: 0; right: 0;
-      top: 11px;
-      height: 3px;
+      position: absolute; left: 0; right: 0; bottom: 2px; height: 3px;
       background: var(--bandColor, #2ecc71);
-      z-index: 1;
     }
-    .train .trainNose {
-      position: absolute;
-      right: 2px;
-      top: 2px;
-      width: 6px;
-      height: 6px;
-      background: #cfe8ff;
-      border: 1px solid #aacbe6;
-      border-radius: 1px 4px 1px 1px;
-      z-index: 2;
+    /* 床下スカート */
+    .train .trainSkirt {
+      width: 50px; height: 3px; margin: 0 auto;
+      background: #6f767c; border-radius: 0 0 2px 2px;
     }
-    .train .trainLight {
-      position: absolute;
-      right: 3px;
-      bottom: 2px;
-      width: 3px;
-      height: 3px;
-      background: #fff3b0;
-      border-radius: 50%;
-      z-index: 2;
-    }
+    /* 車輪（4つ）*/
     .train .trainWheels {
-      position: absolute;
-      bottom: 0;
-      left: 5px;
-      right: 5px;
-      display: flex;
-      justify-content: space-between;
+      position: absolute; bottom: 0; left: 6px; right: 6px;
+      display: flex; justify-content: space-between;
     }
     .train .trainWheels i {
-      display: block;
-      width: 6px;
-      height: 6px;
-      background: #333;
-      border-radius: 50%;
-      border: 1px solid #666;
+      display: block; width: 5px; height: 5px;
+      background: #333; border-radius: 50%; border: 1px solid #666;
     }
 
     /* ===== 結果表示 ===== */
     #result {
-      max-width: 920px;
-      margin: 14px auto;
-      background: #fff;
-      border-radius: 10px;
-      padding: 12px;
-      font-size: 15px;
-      line-height: 1.9;
-      box-shadow: 0 2px 6px rgba(0,0,0,.08);
-      display: none;
+      max-width: 920px; margin: 14px auto;
+      background: #fff; border-radius: 10px; padding: 12px;
+      font-size: 15px; line-height: 1.9;
+      box-shadow: 0 2px 6px rgba(0,0,0,.08); display: none;
     }
     #result.show { display: block; }
     #result h2 { margin: 0 0 8px; font-size: 18px; color: #1b3a5b; }
@@ -324,23 +265,26 @@
 <body>
   <h1>みんなですごろく 〜栗山から小樽〜</h1>
 
-  <div class="topArea">
-    <div class="nameArea" id="nameArea">
-      <input id="nameInput" type="text" maxlength="12" placeholder="名前を入力" />
-      <button id="nameBtn">名前を決定</button>
-    </div>
-    <div id="status">接続中...</div>
-    <div id="players"></div>
+  <!-- 上部固定エリア -->
+  <div class="stickyTop">
+    <div class="topInner">
+      <div class="nameArea" id="nameArea">
+        <input id="nameInput" type="text" maxlength="12" placeholder="名前を入力" />
+        <button id="nameBtn">名前を決定</button>
+      </div>
+      <div id="status">接続中...</div>
+      <div id="players"></div>
 
-    <div id="rouletteWrap">
-      <div id="pointer"></div>
-      <canvas id="wheel" width="260" height="260"></canvas>
-    </div>
+      <div id="rouletteWrap">
+        <div id="pointer"></div>
+        <canvas id="wheel" width="260" height="260"></canvas>
+      </div>
 
-    <div style="text-align:center; margin-top:8px;">
-      <button id="startBtn">ゲーム開始</button>
-      <button id="rollBtn">ルーレットを回す</button>
-      <button id="resetBtn">リセット</button>
+      <div class="btnRow">
+        <button id="startBtn">ゲーム開始</button>
+        <button id="rollBtn">ルーレットを回す</button>
+        <button id="resetBtn">リセット</button>
+      </div>
     </div>
   </div>
 

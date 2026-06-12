@@ -1,13 +1,13 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v2.1
+   バージョン: v2.2
    日付: 2026-06-12
-   v2.1での変更点:
-     - リセット時、接続中の全クライアントをプレイヤーとして登録し直し、
-       各自へ新しい joined(新ID) を配り直す
-       （再読み込みなしで正常な待機状態へ戻る）
-   v2.0: 切断削除/リセット完全初期化/(CPU)付き解消 ほか
-   ※ client.js も v2.1 とセットで使うこと
+   v2.2での変更点:
+     - リセットはサーバーを完全初期化し resetReady を通知するだけにし、
+       実際の繋ぎ直しはクライアント側(socket再接続)に任せる
+       （IDずれによる「始まらない」不具合を構造的に解消）
+   v2.0/2.1: 切断削除・(CPU)付き解消 ほか
+   ※ client.js / index.html も v2.2 とセットで使うこと
    ========================================================= */
 
 const express = require("express");
@@ -91,27 +91,10 @@ function clearAll() {
   seqCounter = 0;
 }
 
-// リセット：完全初期化したうえで、今つながっている全員を
-// 新しいプレイヤーとして登録し直し、各自へ新IDを配る
-async function resetGame() {
+// リセット：完全初期化して、全員に「繋ぎ直して」と伝えるだけ
+function resetGame() {
   clearAll();
-
-  // 現在接続中の全ソケットを取得
-  const sockets = await io.fetchSockets();
-  let n = 1;
-  for (const s of sockets) {
-    const player = {
-      id: s.id, name: "Player" + n,
-      pos: 0, isCPU: false, rank: 0,
-    };
-    players.push(player);
-    s.emit("resetDone");      // 名前欄を空にして待機画面へ
-    s.emit("joined", s.id);   // 新しい自分のIDを配り直す
-    n++;
-    if (players.length >= MAX_PLAYERS) break;
-  }
-
-  broadcastState();
+  io.emit("resetReady");  // クライアントが自分で再接続する
 }
 
 function startGame() {
