@@ -1,16 +1,15 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.1
+   バージョン: v3.3
    日付: 2026-06-12
-   v3.1での変更点:
-     - 両ルートを同時表示（外周ループ盤面）
-       ・栗山を右端中央に置き、上＝岩見沢/下＝追分で左へ分岐
-       ・左端で折り返し、最上段の共通区間(白石〜小樽)を左へ流す
-       ・輪の中央にルーレット＋操作を配置
-     - コマは進行方向に合わせて自動反転（左/右）
-     - 各プレイヤーは自分のrouteKeyのルート上を進む
+   v3.3での変更点:
+     - 共通区間(白石→苗穂→札幌→…→小樽)の並び順バグを修正
+       （苗穂が消える／白石と札幌が入れ替わる問題を解消）
+     - computeLayout の列計算を見直し、駅の重なりをなくした
+   v3.2: ルーレット画面固定・コマ追従
+   v3.1: 両ルート同時表示（外周ループ）・コマ進行方向で自動反転
    v2.2: iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js / index.html も v3.1 とセットで使うこと
+   ※ server.js v3.1 / index.html v3.2 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -163,44 +162,39 @@ function stationOf(routeKey, i) {
 
 // =========================================================
 //  外周ループのレイアウト座標を計算
-//  返り値: layout[routeKey] = [{pos, row, col, dir}], dir: "L" or "R"
-//  - 上行(row=UP_ROW): 岩見沢ルートの分岐を右→左
-//  - 下行(row=DOWN_ROW): 追分ルートの分岐を右→左
-//  - 最上段(row=TOP_ROW): 共通区間を左へ流す（白石→小樽）
-//  栗山は右端(共通の起点列)に両ルート重ねず1つだけ置く
+//  - 上行(UP_ROW): 岩見沢ルートの分岐を右→左
+//  - 下行(DOWN_ROW): 追分ルートの分岐を右→左
+//  - 最上段(TOP_ROW): 共通区間を 白石(右)→小樽(左) で並べる
 // =========================================================
-const TOP_ROW = 1;   // 共通区間（外周・上）
-const UP_ROW = 3;    // 岩見沢ルート
-const MID_ROW = 5;   // 中央（ルーレット用に空ける：4〜6行）
-const DOWN_ROW = 7;  // 追分ルート
+const TOP_ROW = 1;
+const UP_ROW = 3;
+const MID_ROW = 5;
+const DOWN_ROW = 7;
 
 function computeLayout() {
   const result = { oiwake: [], iwamizawa: [] };
-  const csI = commonStart.iwamizawa; // 岩見沢の分岐駅数（=白石の手前まで）
-  const csO = commonStart.oiwake;    // 追分の分岐駅数
+  const csI = commonStart.iwamizawa; // 岩見沢の分岐駅数（栗山〜厚別）
+  const csO = commonStart.oiwake;    // 追分の分岐駅数（栗山〜平和）
   const branchMax = Math.max(csI, csO); // 長いほうの分岐に合わせる
-  // 右端列 = branchMax（栗山）。共通区間は左へ。
-  const RIGHT_COL = branchMax + 1;
+  const commonLen = routes.iwamizawa.length - csI; // 共通区間の駅数（白石〜小樽）
 
-  // --- 分岐：岩見沢（上行）右→左 ---
+  // 全体がプラス座標に収まるよう右端列を十分大きく取る
+  const RIGHT_COL = branchMax + commonLen + 1;
+
+  // --- 分岐：岩見沢（上行）栗山(右)→厚別(左) ---
   for (let i = 0; i < csI; i++) {
-    // i=0(栗山)を右端、増えるほど左へ
     result.iwamizawa.push({ pos: i, row: UP_ROW, col: RIGHT_COL - i, dir: "L" });
   }
-  // --- 分岐：追分（下行）右→左 ---
+  // --- 分岐：追分（下行）栗山(右)→平和(左) ---
   for (let i = 0; i < csO; i++) {
     result.oiwake.push({ pos: i, row: DOWN_ROW, col: RIGHT_COL - i, dir: "L" });
   }
 
-  // --- 共通区間（最上段）左→右ではなく、左端から右へ並べると小樽が右に来てしまう。
-  //     外周ループとして「左へ流して左端で小樽ゴール」にするため、
-  //     共通区間は最上段を右(合流点)→左(小樽) に並べる ---
-  const commonLen = (routes.iwamizawa.length - csI); // = COMMONの長さ
-  // 合流点(白石)を、分岐の左端のすぐ上に置き、そこから左へ小樽まで
-  const mergeCol = RIGHT_COL - (branchMax - 1); // 分岐左端の列
+  // --- 共通区間（最上段）白石(右)→小樽(左) ---
+  // 白石の列 = 分岐左端のさらに1つ左
+  const whiteishiCol = RIGHT_COL - branchMax - 1;
   for (let j = 0; j < commonLen; j++) {
-    const col = mergeCol - j; // 右(白石)→左(小樽)
-    // 両ルートとも共通区間は同じセルを共有して描画する
+    const col = whiteishiCol - j; // j=0:白石(右) … 末尾:小樽(左)
     result.iwamizawa.push({ pos: csI + j, row: TOP_ROW, col: col, dir: "L", common: true });
     result.oiwake.push({ pos: csO + j, row: TOP_ROW, col: col, dir: "L", common: true });
   }
@@ -218,9 +212,9 @@ function positionsUpToShown() {
 
 // ===== 盤面描画 =====
 let layout = null;
-let cellMap = {}; // "routeKey:pos" -> cell要素
+let cellMap = {};
 
-function buildSign(routeKey, pos, kanjiLen) {
+function buildSign(routeKey, pos) {
   const sign = document.createElement("div");
   sign.className = "stSign";
   const st = stationOf(routeKey, pos);
@@ -268,7 +262,7 @@ function makeTrain(colorIndex, name, dir) {
   wrap.className = "pawnWrap";
   const train = document.createElement("div");
   train.className = "train";
-  if (dir === "L") train.classList.add("flip"); // 左向きは反転
+  if (dir === "L") train.classList.add("flip");
   train.style.setProperty("--bandColor", COLORS[colorIndex]);
   train.innerHTML =
     '<div class="trainBody">' +
@@ -292,7 +286,6 @@ function renderBoard(positions, override) {
   cellMap = {};
   layout = computeLayout();
 
-  // 両ルートのセルを描画（共通区間は同じcol/rowに1つだけ置く）
   const drawnCommon = {};
   ["iwamizawa", "oiwake"].forEach((rk) => {
     layout[rk].forEach((item) => {
@@ -314,7 +307,6 @@ function renderBoard(positions, override) {
     });
   });
 
-  // コマ配置
   latestState.players.forEach((p, idx) => {
     let pos = positions[idx];
     if (override && override.idx === idx) pos = override.pos;
