@@ -1,30 +1,36 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.4
-   日付: 2026-06-12
+   バージョン: v1.2
+   日付: 2026-05-29
    このファイル: ブラウザ側（画面表示・ルーレット演出・音）
-   v1.4での変更点:
-     - 駅名を「駅名標ふう」に表示（上にひらがな、下に漢字）
-       サーバーの stations は {kanji, kana} の形に変わった
-   v1.3: 駅名表示, v1.0〜v1.2: moves順番演出・止まる位置・右回り
-   ※ server.js / index.html も v1.4 とセットで使うこと
+   v1.2での変更点:
+     - ルーレットが「必ず右回りで何回転もしてから」止まるように修正
+       （数字がピタッと合う向きは v1.1 のまま維持）
+   v1.1での変更点:
+     - ルーレットの止まる位置を毎回ゼロから計算してズレを修正
+   v1.0での変更点:
+     - サーバーの moves(seq番号つき) を順番に1つずつ演出する方式
+     - 「ルーレットが止まってからコマが進む」流れ
+     - 順番の逆転・1周でのフリーズを解消
+   ※ server.js は v1.0 のままでOK（server側は変更なし）
    ========================================================= */
 
 const socket = io();
 const COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#f1c40f", "#9b59b6"];
 const SEGMENTS = 10;
 
+// ルーレットの区画の色（1→10の順）
 const WHEEL_COLORS = [
   "#f4d000", "#f5a623", "#e8731c", "#e8231c", "#e6007e",
   "#9b3fb5", "#5b3fb5", "#1c9ee8", "#2e8b3f", "#8bc63f",
 ];
 
 let myId = null;
-let goal = 37;
-let stations = [];         // {kanji, kana} の配列
+let goal = 40;
 let currentRotation = 0;
 let lastWinnerShown = false;
 
+// ===== 演出の管理 =====
 let lastShownSeq = 0;
 let animating = false;
 let latestState = null;
@@ -79,7 +85,7 @@ function winSound() {
   notes.forEach((n, i) => setTimeout(() => beep(n, 200, "triangle", 0.3), i * 180));
 }
 
-// ===== ルーレット描画 =====
+// ===== ルーレット描画（前のバージョンのまま）=====
 function drawWheel() {
   const size = wheel.width;
   const r = size / 2;
@@ -147,30 +153,26 @@ function spinTo(dice, onStop) {
   ensureAudio();
   startTicking();
   const seg = 360 / SEGMENTS;
+  // その数字の中央が真上に来る「最終的な向き」（0〜360度）
   const targetCenter = (dice - 1) * seg + seg / 2;
   const finalFacing = (360 - targetCenter) % 360;
+
+  // 今の回転角を 0〜360 に直した「現在の向き」
   const currentFacing = ((currentRotation % 360) + 360) % 360;
+
+  // 現在の向きから、必ず右回り(プラス方向)で finalFacing に到達する差分
   let delta = finalFacing - currentFacing;
   if (delta < 0) delta += 360;
+
+  // それに5回転ぶんを上乗せして、勢いよく回す
   currentRotation += delta + 360 * 5;
+
   wheel.style.transform = `rotate(${currentRotation}deg)`;
   setTimeout(() => {
     stopTicking();
     stopSound();
     if (onStop) setTimeout(onStop, 400);
   }, 4000);
-}
-
-// ===== 駅名の取り出し（保険つき）=====
-function stKanji(i) {
-  const s = stations[i];
-  if (!s) return String(i);
-  return s.kanji || String(i);
-}
-function stKana(i) {
-  const s = stations[i];
-  if (!s) return "";
-  return s.kana || "";
 }
 
 // ===== コマを1歩ずつ進める =====
@@ -206,7 +208,7 @@ function processNextMove() {
   drawBoardWithOverride(next.index, next.from);
 
   spinTo(next.dice, () => {
-    statusEl.textContent = next.name + " が " + next.dice + " を出して「" + stKanji(next.to) + "」へ";
+    statusEl.textContent = next.name + " が " + next.dice + " を出しました";
     animateSteps(next.index, next.from, next.to, () => {
       lastShownSeq = next.seq;
       animating = false;
@@ -232,7 +234,6 @@ socket.on("rejected", (msg) => {
 
 socket.on("state", (state) => {
   goal = state.goal;
-  stations = state.stations || [];
   latestState = state;
 
   if (!state.started || state.finished) {
@@ -241,32 +242,16 @@ socket.on("state", (state) => {
   processNextMove();
 });
 
-// ===== 盤面描画（駅名標ふう）=====
+// ===== 盤面描画 =====
 function buildCell(i) {
   const cell = document.createElement("div");
   cell.className = "cell";
   if (i === 0) cell.classList.add("start");
   if (i === goal) cell.classList.add("goal");
-
-  // ひらがな（上、大きめ）
-  const kana = document.createElement("div");
-  kana.className = "stKana";
-  kana.textContent = stKana(i);
-  cell.appendChild(kana);
-
-  // 漢字（下、小さめ）
-  const kanji = document.createElement("div");
-  kanji.className = "stKanji";
-  kanji.textContent = stKanji(i);
-  cell.appendChild(kanji);
-
-  // START / GOAL の小さなラベル
-  if (i === 0 || i === goal) {
-    const tag = document.createElement("div");
-    tag.className = "stTag";
-    tag.textContent = (i === 0) ? "START" : "GOAL";
-    cell.appendChild(tag);
-  }
+  const num = document.createElement("div");
+  num.className = "num";
+  num.textContent = i === 0 ? "START" : i === goal ? "GOAL" : i;
+  cell.appendChild(num);
   return cell;
 }
 
@@ -334,13 +319,11 @@ function finalizeState(state) {
   drawBoard();
 
   playersEl.innerHTML = state.players
-    .map((p, idx) => {
-      return `<span style="color:${COLORS[idx]}">●</span>${p.name}（${stKanji(p.pos)}）`;
-    })
+    .map((p, idx) => `<span style="color:${COLORS[idx]}">●</span>${p.name}（${p.pos}）`)
     .join("　");
 
   if (state.finished) {
-    statusEl.textContent = "🏁 全員ゴール（小樽）！ゲーム終了";
+    statusEl.textContent = "🏁 全員ゴール！ゲーム終了";
     startBtn.disabled = true; rollBtn.disabled = true;
     showResult(state);
     return;

@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>すごろく</title>
+  <style>
+    body { font-family: sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 16px; }
+    h1 { margin: 12px; font-size: 22px; }
+
+    #nameArea { margin: 10px; }
+    #nameInput { font-size: 16px; padding: 8px; border-radius: 6px; border: 1px solid #aaa; width: 160px; }
+
+    #board {
+      display: grid;
+      grid-template-columns: repeat(10, 1fr);
+      gap: 3px; max-width: 720px; margin: 16px auto;
+    }
+    .cell {
+      aspect-ratio: 1; background: #fff; border: 1px solid #ccc;
+      border-radius: 5px; display: flex; flex-direction: column;
+      align-items: center; justify-content: flex-start; font-size: 9px; position: relative;
+      padding-top: 2px; min-height: 44px;
+    }
+    .cell .num { color: #bbb; }
+    .cell.start { background: #d5f5e3; }
+    .cell.goal { background: #fdebd0; }
+    .pawns { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; margin-top: 1px; }
+
+    /* 立体的なコマ */
+    .pawn {
+      width: 16px; height: 16px; border-radius: 50%;
+      box-shadow: inset -2px -3px 3px rgba(0,0,0,0.35), inset 2px 2px 3px rgba(255,255,255,0.6), 1px 2px 3px rgba(0,0,0,0.3);
+      position: relative;
+    }
+    .pawnName { font-size: 7px; line-height: 1; color: #333; max-width: 30px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .pawnWrap { display: flex; flex-direction: column; align-items: center; }
+
+    button {
+      font-size: 16px; padding: 10px 24px; margin: 6px; border: none;
+      border-radius: 6px; cursor: pointer; background: #3498db; color: #fff;
+    }
+    button:disabled { background: #bbb; cursor: not-allowed; }
+    #status { font-size: 18px; margin: 10px; min-height: 26px; font-weight: bold; }
+    #players { font-size: 13px; color: #555; margin-bottom: 10px; }
+    #result { font-size: 14px; color: #333; white-space: pre-line; margin: 10px; }
+
+    /* ===== ルーレット ===== */
+    #rouletteWrap { position: relative; width: 260px; height: 260px; margin: 16px auto; }
+    #pointer {
+      position: absolute; top: -4px; left: 50%; transform: translateX(-50%);
+      width: 0; height: 0; border-left: 13px solid transparent;
+      border-right: 13px solid transparent; border-top: 26px solid #333; z-index: 2;
+    }
+    #wheel {
+      transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99);
+    }
+  </style>
+</head>
+<body>
+  <h1>みんなですごろく</h1>
+
+  <div id="nameArea">
+    <input id="nameInput" type="text" placeholder="名前を入力" maxlength="12" />
+    <button id="nameBtn">名前を決定</button>
+  </div>
+
+  <div id="status">接続中...</div>
+  <div id="players"></div>
+
+  <div id="rouletteWrap">
+    <div id="pointer"></div>
+    <canvas id="wheel" width="260" height="260"></canvas>
+  </div>
+
+  <div id="board"></div>
+  <div>
+    <button id="startBtn">ゲーム開始</button>
+    <button id="rollBtn" disabled>ルーレットを回す</button>
+  </div>
+
+  <div id="result"></div>
+
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/client.js"></script>
+</body>
+</html>

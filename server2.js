@@ -1,13 +1,12 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v1.4
-   日付: 2026-06-12
+   バージョン: v1.0
+   日付: 2026-05-29
    このファイル: サーバー側（ゲームの進行・順番・位置の管理）
-   v1.4での変更点:
-     - 駅名に「漢字」と「ひらがな(読み)」の両方を持たせた
-       （client側で駅名標ふうに表示するため）
-   v1.3: マスを栗山〜小樽の38駅に変更（0=栗山, 37=小樽ゴール）
-   ※ client.js / index.html も v1.4 とセットで使うこと
+   v1.0での変更点:
+     - 「動いた1手ずつ」を seq 番号つきで記録する moves 方式に変更
+     - これにより client 側で順番の逆転・フリーズを防ぐ
+   ※ client.js も同じ v1.0 とセットで使うこと
    ========================================================= */
 
 const express = require("express");
@@ -22,50 +21,7 @@ const io = new Server(server);
 app.use(express.static(path.join(__dirname, "public")));
 app.get("/health", (req, res) => res.send("ok"));
 
-// ===== 駅名リスト（栗山スタート → 小樽ゴール、全38駅）=====
-// kanji = 漢字表記, kana = ひらがな（読み）
-const STATIONS = [
-  { kanji: "栗山", kana: "くりやま" },
-  { kanji: "由仁", kana: "ゆに" },
-  { kanji: "古山", kana: "ふるさん" },
-  { kanji: "三川", kana: "みかわ" },
-  { kanji: "追分", kana: "おいわけ" },
-  { kanji: "安平", kana: "あびら" },
-  { kanji: "早来", kana: "はやきた" },
-  { kanji: "遠浅", kana: "とあさ" },
-  { kanji: "沼ノ端", kana: "ぬまのはた" },
-  { kanji: "植苗", kana: "うえなえ" },
-  { kanji: "南千歳", kana: "みなみちとせ" },
-  { kanji: "千歳", kana: "ちとせ" },
-  { kanji: "長都", kana: "おさつ" },
-  { kanji: "サッポロビール庭園", kana: "さっぽろびーるていえん" },
-  { kanji: "恵庭", kana: "えにわ" },
-  { kanji: "恵み野", kana: "めぐみの" },
-  { kanji: "島松", kana: "しままつ" },
-  { kanji: "北広島", kana: "きたひろしま" },
-  { kanji: "上野幌", kana: "かみのっぽろ" },
-  { kanji: "新札幌", kana: "しんさっぽろ" },
-  { kanji: "平和", kana: "へいわ" },
-  { kanji: "白石", kana: "しろいし" },
-  { kanji: "苗穂", kana: "なえぼ" },
-  { kanji: "札幌", kana: "さっぽろ" },
-  { kanji: "桑園", kana: "そうえん" },
-  { kanji: "琴似", kana: "ことに" },
-  { kanji: "発寒中央", kana: "はっさむちゅうおう" },
-  { kanji: "発寒", kana: "はっさむ" },
-  { kanji: "稲積公園", kana: "いなづみこうえん" },
-  { kanji: "手稲", kana: "ていね" },
-  { kanji: "稲穂", kana: "いなほ" },
-  { kanji: "星置", kana: "ほしおき" },
-  { kanji: "ほしみ", kana: "ほしみ" },
-  { kanji: "銭函", kana: "ぜにばこ" },
-  { kanji: "朝里", kana: "あさり" },
-  { kanji: "小樽築港", kana: "おたるちっこう" },
-  { kanji: "南小樽", kana: "みなみおたる" },
-  { kanji: "小樽", kana: "おたる" },
-];
-
-const GOAL = STATIONS.length - 1; // = 37（小樽がゴール）
+const GOAL = 40;
 const MAX_PLAYERS = 5;
 
 let players = [];
@@ -74,13 +30,14 @@ let started = false;
 let finished = false;
 let finishedCount = 0;
 
+// 「動いた記録」を1手ずつ積む。client はこれを順番に演出する。
 let moves = [];   // { seq, index, name, dice, from, to }
 let seqCounter = 0;
 
 function broadcastState() {
   io.emit("state", {
     players, currentTurn, started, finished,
-    goal: GOAL, stations: STATIONS, moves,
+    goal: GOAL, moves,
   });
 }
 
@@ -124,6 +81,7 @@ function rollDice() {
   }
   const to = player.pos;
 
+  // この1手を記録（client はこれを順番に演出する）
   seqCounter += 1;
   moves.push({
     seq: seqCounter,
@@ -131,6 +89,7 @@ function rollDice() {
     name: player.name,
     dice, from, to,
   });
+  // 記録が増えすぎないよう、古いものは捨てる（直近30手だけ残す）
   if (moves.length > 30) moves = moves.slice(-30);
 
   if (players.every((p) => p.rank > 0)) {

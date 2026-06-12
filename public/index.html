@@ -1,9 +1,18 @@
 <!DOCTYPE html>
+<!-- =========================================================
+     すごろくゲーム  index.html
+     バージョン: v1.4
+     日付: 2026-06-12
+     このファイル: 画面の見た目（HTML・CSS）
+     v1.4での変更点:
+       - マスをJR北海道の駅名標ふう（青地・白枠）に変更
+       - ひらがな(上・大)＋漢字(下・小)を表示、長い駅名は自動で縮小
+     ========================================================= -->
 <html lang="ja">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>すごろく</title>
+  <title>すごろく 栗山→小樽</title>
   <style>
     body { font-family: sans-serif; text-align: center; background: #f4f4f4; margin: 0; padding: 16px; }
     h1 { margin: 12px; font-size: 22px; }
@@ -14,26 +23,52 @@
     #board {
       display: grid;
       grid-template-columns: repeat(10, 1fr);
-      gap: 3px; max-width: 720px; margin: 16px auto;
+      gap: 4px; max-width: 760px; margin: 16px auto;
     }
-    .cell {
-      aspect-ratio: 1; background: #fff; border: 1px solid #ccc;
-      border-radius: 5px; display: flex; flex-direction: column;
-      align-items: center; justify-content: flex-start; font-size: 9px; position: relative;
-      padding-top: 2px; min-height: 44px;
-    }
-    .cell .num { color: #bbb; }
-    .cell.start { background: #d5f5e3; }
-    .cell.goal { background: #fdebd0; }
-    .pawns { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; margin-top: 1px; }
 
-    /* 立体的なコマ */
-    .pawn {
-      width: 16px; height: 16px; border-radius: 50%;
-      box-shadow: inset -2px -3px 3px rgba(0,0,0,0.35), inset 2px 2px 3px rgba(255,255,255,0.6), 1px 2px 3px rgba(0,0,0,0.3);
-      position: relative;
+    /* ===== 駅名標ふうのマス ===== */
+    .cell {
+      aspect-ratio: 1;
+      background: #0b3d91;            /* JR風の青 */
+      border: 2px solid #fff;
+      border-radius: 4px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      position: relative; overflow: hidden;
+      min-height: 56px; padding: 2px;
     }
-    .pawnName { font-size: 7px; line-height: 1; color: #333; max-width: 30px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    /* ひらがな（上・大きめ）。長い駅名は縮むように幅いっぱいに収める */
+    .cell .stKana {
+      color: #fff; font-weight: bold; line-height: 1.05;
+      font-size: 11px;
+      width: 100%;
+      white-space: nowrap;
+      transform-origin: center;
+      /* 長い文字は自動で縮める（はみ出し防止） */
+      overflow: hidden; text-overflow: clip;
+    }
+    /* 漢字（下・小さめ） */
+    .cell .stKanji {
+      color: #cfe0ff; line-height: 1.05;
+      font-size: 8px; margin-top: 1px;
+      width: 100%; white-space: nowrap; overflow: hidden;
+    }
+    /* START / GOAL の小ラベル */
+    .cell .stTag {
+      position: absolute; top: 1px; left: 1px;
+      font-size: 7px; color: #0b3d91; background: #ffd400;
+      border-radius: 2px; padding: 0 2px; font-weight: bold;
+    }
+    .cell.start { background: #1c7a3f; }   /* スタートは緑系 */
+    .cell.goal  { background: #b8341b; }   /* ゴールは赤系 */
+
+    .pawns { position: absolute; bottom: 1px; display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; }
+    .pawn {
+      width: 14px; height: 14px; border-radius: 50%;
+      box-shadow: inset -2px -3px 3px rgba(0,0,0,0.35), inset 2px 2px 3px rgba(255,255,255,0.6), 1px 2px 3px rgba(0,0,0,0.3);
+    }
+    .pawnName { font-size: 7px; line-height: 1; color: #fff; max-width: 36px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .pawnWrap { display: flex; flex-direction: column; align-items: center; }
 
     button {
@@ -52,13 +87,11 @@
       width: 0; height: 0; border-left: 13px solid transparent;
       border-right: 13px solid transparent; border-top: 26px solid #333; z-index: 2;
     }
-    #wheel {
-      transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99);
-    }
+    #wheel { transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99); }
   </style>
 </head>
 <body>
-  <h1>みんなですごろく</h1>
+  <h1>すごろく 栗山 → 小樽</h1>
 
   <div id="nameArea">
     <input id="nameInput" type="text" placeholder="名前を入力" maxlength="12" />
@@ -82,6 +115,28 @@
   <div id="result"></div>
 
   <script src="/socket.io/socket.io.js"></script>
+  <script>
+    // 長い駅名(ひらがな)がマス幅からはみ出すとき、自動で文字を縮める処理。
+    // 盤面が描き直されるたびに実行したいので、少し待ってから繰り返しチェックする。
+    function fitStationLabels() {
+      document.querySelectorAll("#board .cell").forEach((cell) => {
+        const kana = cell.querySelector(".stKana");
+        if (!kana) return;
+        kana.style.transform = "scaleX(1)";
+        const cellW = cell.clientWidth - 4;
+        const textW = kana.scrollWidth;
+        if (textW > cellW && textW > 0) {
+          const scale = Math.max(0.4, cellW / textW);
+          kana.style.transform = "scaleX(" + scale + ")";
+        }
+      });
+    }
+    // 盤面の変化を監視して、変わるたびに文字サイズを調整する
+    const boardObserverTarget = document.getElementById("board");
+    const mo = new MutationObserver(() => { fitStationLabels(); });
+    mo.observe(boardObserverTarget, { childList: true, subtree: true });
+    window.addEventListener("resize", fitStationLabels);
+  </script>
   <script src="/client.js"></script>
 </body>
 </html>
