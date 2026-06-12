@@ -1,14 +1,12 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v2.0
+   バージョン: v2.1
    日付: 2026-06-12
-   v2.0での変更点:
-     - リセット時 resetDone を受け取り、名前入力欄を空にして待機へ戻す
-       （前に入力した名前が残らない）
-     - 全ボタン（名前を決定/ゲーム開始/リセット）で音を鳴らす
-     - リセットボタンの確認文言を整理
-   v1.9: 名前決定音・長い駅名1段・721系風電車 ほか
-   ※ server.js / index.html も v2.0 とセットで使うこと
+   v2.1での変更点:
+     - リセット後に配り直される新しい joined(新ID) を確実に受け取り、
+       myId を更新／盤面・状態を初期化（再読み込み不要で再開できる）
+   v2.0: resetDoneで名前欄クリア・全ボタン音 ほか
+   ※ server.js も v2.1 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -61,7 +59,6 @@ function beep(freq, durationMs, type = "square", volume = 0.2) {
   osc.start();
   osc.stop(audioCtx.currentTime + durationMs / 1000);
 }
-// ボタン共通のクリック音（種類で音色を少し変える）
 function clickSound(kind) {
   ensureAudio();
   if (kind === "name")  { beep(880, 90, "square", 0.22); setTimeout(() => beep(1320, 120, "square", 0.22), 90); }
@@ -254,18 +251,26 @@ resetBtn.addEventListener("click", () => {
   }
 });
 
+// joined は最初の接続時にもリセット後にも届く。届くたびに myId を更新
 socket.on("joined", (id) => { myId = id; });
+
 socket.on("rejected", (msg) => {
   statusEl.textContent = msg;
   startBtn.disabled = true; rollBtn.disabled = true;
 });
 
-// リセット完了：名前欄を空にして演出状態も初期化
+// リセット完了：名前欄を空にして演出状態と画面を初期化
 socket.on("resetDone", () => {
   nameInput.value = "";
   lastShownSeq = 0;
   animating = false;
   fanfaredIndexes = {};
+  currentRotation = 0;
+  wheel.style.transition = "none";
+  wheel.style.transform = "rotate(0deg)";
+  // 次の回転で再びアニメが効くように戻す
+  setTimeout(() => { wheel.style.transition = ""; }, 50);
+  resultEl.classList.remove("show");
 });
 
 socket.on("state", (state) => {

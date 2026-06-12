@@ -1,15 +1,13 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v2.0
+   バージョン: v2.1
    日付: 2026-06-12
-   v2.0での変更点:
-     - 切断したプレイヤーは(CPU)化せず、配列から確実に削除
-       （人間に「(CPU)」が付く不具合を解消）
-     - リセットはサーバーを完全に空にし、resetDone を全員へ通知
-       （名前残り・CPU5人で勝手に開始する不具合を解消）
-     - 人間が0人になったら自動で待機状態へ戻す
-   v1.8: リセット確実初期化/満員詰まり解消 ほか
-   ※ client.js / index.html も v2.0 とセットで使うこと
+   v2.1での変更点:
+     - リセット時、接続中の全クライアントをプレイヤーとして登録し直し、
+       各自へ新しい joined(新ID) を配り直す
+       （再読み込みなしで正常な待機状態へ戻る）
+   v2.0: 切断削除/リセット完全初期化/(CPU)付き解消 ほか
+   ※ client.js も v2.1 とセットで使うこと
    ========================================================= */
 
 const express = require("express");
@@ -83,7 +81,6 @@ function broadcastState() {
   });
 }
 
-// サーバーを完全に初期化（空っぽの待機状態に戻す）
 function clearAll() {
   players = [];
   currentTurn = 0;
@@ -94,15 +91,30 @@ function clearAll() {
   seqCounter = 0;
 }
 
-// リセット：完全初期化＋全員へ「初期化して」と通知
-function resetGame() {
+// リセット：完全初期化したうえで、今つながっている全員を
+// 新しいプレイヤーとして登録し直し、各自へ新IDを配る
+async function resetGame() {
   clearAll();
-  io.emit("resetDone"); // クライアントは名前欄を空にして待機画面へ
+
+  // 現在接続中の全ソケットを取得
+  const sockets = await io.fetchSockets();
+  let n = 1;
+  for (const s of sockets) {
+    const player = {
+      id: s.id, name: "Player" + n,
+      pos: 0, isCPU: false, rank: 0,
+    };
+    players.push(player);
+    s.emit("resetDone");      // 名前欄を空にして待機画面へ
+    s.emit("joined", s.id);   // 新しい自分のIDを配り直す
+    n++;
+    if (players.length >= MAX_PLAYERS) break;
+  }
+
   broadcastState();
 }
 
 function startGame() {
-  // 開始時点で人間がいなければ始めない（暴走防止）
   if (players.filter((p) => !p.isCPU).length === 0) return;
   while (players.length < MAX_PLAYERS) {
     const i = players.length;
@@ -198,19 +210,14 @@ io.on("connection", (socket) => {
 
   socket.on("disconnect", () => {
     if (!started) {
-      // 待機中の切断：その人を配列から削除（(CPU)化しない）
       players = players.filter((x) => x.id !== socket.id);
-      // 残りの人間が0人なら完全初期化
       if (players.filter((x) => !x.isCPU).length === 0) clearAll();
       broadcastState();
       return;
     }
-
-    // ゲーム中の切断：進行を止めないようCPUに肩代わりさせる
     const p = players.find((x) => x.id === socket.id);
-    if (p) { p.isCPU = true; }   // 名前に(CPU)は付けない
+    if (p) { p.isCPU = true; }
     if (players.filter((x) => !x.isCPU).length === 0) {
-      // 人間が全員いなくなったら待機状態へ戻す
       clearAll();
     } else if (players[currentTurn] && players[currentTurn].isCPU) {
       maybeRunCPU();
