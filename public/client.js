@@ -1,14 +1,16 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.0
+   バージョン: v3.1
    日付: 2026-06-12
-   v3.0での変更点:
-     - ルート選択（追分経由 / 岩見沢経由）に対応
-       ・開始前にボタンで選択、選択中のルートを表示
-       ・routeKey はサーバーから同期（全員の画面で一致）
-     - 駅数・ゴールはサーバーの stations/goal をそのまま使用
-   v2.3: iPhone音復活・721系風電車・ルーレット固定/自動スクロール
-   ※ server.js / index.html も v3.0 とセットで使うこと
+   v3.1での変更点:
+     - 両ルートを同時表示（外周ループ盤面）
+       ・栗山を右端中央に置き、上＝岩見沢/下＝追分で左へ分岐
+       ・左端で折り返し、最上段の共通区間(白石〜小樽)を左へ流す
+       ・輪の中央にルーレット＋操作を配置
+     - コマは進行方向に合わせて自動反転（左/右）
+     - 各プレイヤーは自分のrouteKeyのルート上を進む
+   v2.2: iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
+   ※ server.js / index.html も v3.1 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -20,12 +22,12 @@ const WHEEL_COLORS = [
   "#9b3fb5", "#5b3fb5", "#1c9ee8", "#2e8b3f", "#8bc63f",
 ];
 
-const ROUTE_NAMES = { oiwake: "追分経由ルート", iwamizawa: "岩見沢経由ルート" };
+const ROUTE_NAMES = { oiwake: "追分経由", iwamizawa: "岩見沢経由" };
 
 let myId = null;
-let goal = 37;
-let stations = [];
-let routeKey = "oiwake";
+let routes = { oiwake: [], iwamizawa: [] };
+let goals = { oiwake: 0, iwamizawa: 0 };
+let commonStart = { oiwake: 0, iwamizawa: 0 };
 let currentRotation = 0;
 
 let fanfaredIndexes = {};
@@ -44,12 +46,10 @@ const wheel = document.getElementById("wheel");
 const ctx = wheel.getContext("2d");
 const nameInput = document.getElementById("nameInput");
 const nameBtn = document.getElementById("nameBtn");
-const routeArea = document.getElementById("routeArea");
 const routeOiwakeBtn = document.getElementById("routeOiwakeBtn");
 const routeIwamizawaBtn = document.getElementById("routeIwamizawaBtn");
 const routeLabel = document.getElementById("routeLabel");
-
-resetBtn.style.display = "";
+const routeArea = document.getElementById("routeArea");
 
 // ===== 音（iOS Safari対策：壊れたら作り直す）=====
 let audioCtx = null;
@@ -68,7 +68,6 @@ function unlockAudio() {
     if (audioCtx) { try { audioCtx.resume(); } catch (e) {} }
   }
 }
-function ensureAudio() { unlockAudio(); }
 document.addEventListener("visibilitychange", () => {
   if (!document.hidden && audioCtx && audioCtx.state !== "running") {
     try { audioCtx.resume(); } catch (e) {}
@@ -79,13 +78,9 @@ function beep(freq, durationMs, type = "square", volume = 0.2) {
   if (!audioCtx || audioCtx.state !== "running") return;
   const osc = audioCtx.createOscillator();
   const gain = audioCtx.createGain();
-  osc.type = type;
-  osc.frequency.value = freq;
-  gain.gain.value = volume;
-  osc.connect(gain);
-  gain.connect(audioCtx.destination);
-  osc.start();
-  osc.stop(audioCtx.currentTime + durationMs / 1000);
+  osc.type = type; osc.frequency.value = freq; gain.gain.value = volume;
+  osc.connect(gain); gain.connect(audioCtx.destination);
+  osc.start(); osc.stop(audioCtx.currentTime + durationMs / 1000);
 }
 function clickSound(kind) {
   unlockAudio();
@@ -98,28 +93,18 @@ function clickSound(kind) {
 let tickTimer = null;
 function startTicking() {
   let interval = 60;
-  const tick = () => {
-    beep(900, 30, "square", 0.12);
-    interval += 12;
-    if (interval < 280) tickTimer = setTimeout(tick, interval);
-  };
+  const tick = () => { beep(900, 30, "square", 0.12); interval += 12; if (interval < 280) tickTimer = setTimeout(tick, interval); };
   tick();
 }
 function stopTicking() { if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; } }
-function stopSound() {
-  beep(660, 120, "triangle", 0.3);
-  setTimeout(() => beep(880, 160, "triangle", 0.3), 120);
-}
+function stopSound() { beep(660, 120, "triangle", 0.3); setTimeout(() => beep(880, 160, "triangle", 0.3), 120); }
 function stepSound() { beep(1200, 60, "square", 0.2); }
-
 function fanfare() {
   const seq = [
     { f: 523, t: 0, d: 140 }, { f: 523, t: 160, d: 140 }, { f: 523, t: 320, d: 140 },
     { f: 659, t: 480, d: 260 }, { f: 784, t: 760, d: 260 }, { f: 1047, t: 1040, d: 520 }
   ];
-  seq.forEach((n) => {
-    setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t);
-  });
+  seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
 }
 
 // ===== ルーレット描画 =====
@@ -154,16 +139,6 @@ function drawWheel() {
     ctx.fillText(String(i + 1), 0, -textR + 4);
     ctx.restore();
   }
-  ctx.beginPath();
-  const deco = 8;
-  for (let i = 0; i < deco; i++) {
-    const a = (Math.PI * 2 / deco) * i;
-    const x = r + Math.cos(a) * innerR * 0.5;
-    const y = r + Math.sin(a) * innerR * 0.5;
-    if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
-  }
-  ctx.closePath();
-  ctx.strokeStyle = "#bbb"; ctx.lineWidth = 2; ctx.stroke();
 }
 drawWheel();
 
@@ -177,175 +152,123 @@ function spinTo(dice, onStop) {
   if (delta < 0) delta += 360;
   currentRotation += delta + 360 * 5;
   wheel.style.transform = `rotate(${currentRotation}deg)`;
-  setTimeout(() => {
-    stopTicking();
-    stopSound();
-    if (onStop) setTimeout(onStop, 400);
-  }, 4000);
+  setTimeout(() => { stopTicking(); stopSound(); if (onStop) setTimeout(onStop, 400); }, 4000);
 }
 
-function stKanji(i) { const s = stations[i]; return s ? (s.kanji || String(i)) : String(i); }
-function stKana(i)  { const s = stations[i]; return s ? (s.kana || "") : ""; }
-function stRomaji(i){ const s = stations[i]; return s ? (s.romaji || "") : ""; }
-
-function scrollToMyPawn(pos) {
-  const cell = boardEl.children[pos];
-  if (!cell) return;
-  cell.scrollIntoView({ behavior: "smooth", block: "center" });
+// ===== 駅情報の取得（ルート別）=====
+function stationOf(routeKey, i) {
+  const arr = routes[routeKey] || [];
+  return arr[i] || { kanji: String(i), kana: "", romaji: "" };
 }
 
-function animateSteps(playerIndex, from, to, onDone) {
-  let current = from;
-  const myIndex = latestState ? latestState.players.findIndex(p => p.id === myId) : -1;
-  const stepOnce = () => {
-    if (current >= to) { if (onDone) onDone(); return; }
-    current += 1;
-    drawBoardWithOverride(playerIndex, current);
-    stepSound();
-    if (playerIndex === myIndex) scrollToMyPawn(current);
-    if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
-    setTimeout(stepOnce, 350);
-  };
-  if (from === to) { if (onDone) onDone(); return; }
-  stepOnce();
-}
+// =========================================================
+//  外周ループのレイアウト座標を計算
+//  返り値: layout[routeKey] = [{pos, row, col, dir}], dir: "L" or "R"
+//  - 上行(row=UP_ROW): 岩見沢ルートの分岐を右→左
+//  - 下行(row=DOWN_ROW): 追分ルートの分岐を右→左
+//  - 最上段(row=TOP_ROW): 共通区間を左へ流す（白石→小樽）
+//  栗山は右端(共通の起点列)に両ルート重ねず1つだけ置く
+// =========================================================
+const TOP_ROW = 1;   // 共通区間（外周・上）
+const UP_ROW = 3;    // 岩見沢ルート
+const MID_ROW = 5;   // 中央（ルーレット用に空ける：4〜6行）
+const DOWN_ROW = 7;  // 追分ルート
 
-function processNextMove() {
-  if (animating) return;
-  if (!latestState) return;
-  const moves = latestState.moves || [];
-  const next = moves.find((m) => m.seq === lastShownSeq + 1);
-  if (!next) { finalizeState(latestState); return; }
+function computeLayout() {
+  const result = { oiwake: [], iwamizawa: [] };
+  const csI = commonStart.iwamizawa; // 岩見沢の分岐駅数（=白石の手前まで）
+  const csO = commonStart.oiwake;    // 追分の分岐駅数
+  const branchMax = Math.max(csI, csO); // 長いほうの分岐に合わせる
+  // 右端列 = branchMax（栗山）。共通区間は左へ。
+  const RIGHT_COL = branchMax + 1;
 
-  animating = true;
-  rollBtn.disabled = true;
-  statusEl.textContent = next.name + " がルーレットを回しています...";
-  drawBoardWithOverride(next.index, next.from);
-
-  spinTo(next.dice, () => {
-    statusEl.textContent = next.name + " が " + next.dice + " を出して「" + stKanji(next.to) + "」へ";
-    animateSteps(next.index, next.from, next.to, () => {
-      lastShownSeq = next.seq;
-      if (next.to >= goal && !fanfaredIndexes[next.index]) {
-        fanfaredIndexes[next.index] = true;
-        statusEl.textContent = next.name + " が小樽にゴール！";
-        fanfare();
-      }
-      animating = false;
-      processNextMove();
-    });
-  });
-}
-
-// ===== 名前・ルート・ボタン =====
-nameBtn.addEventListener("click", () => {
-  clickSound("name");
-  const name = nameInput.value.trim();
-  if (name) socket.emit("setName", name);
-});
-routeOiwakeBtn.addEventListener("click", () => { clickSound("route"); socket.emit("setRoute", "oiwake"); });
-routeIwamizawaBtn.addEventListener("click", () => { clickSound("route"); socket.emit("setRoute", "iwamizawa"); });
-startBtn.addEventListener("click", () => { clickSound("start"); socket.emit("start"); });
-rollBtn.addEventListener("click", () => { unlockAudio(); rollBtn.disabled = true; socket.emit("roll"); });
-resetBtn.addEventListener("click", () => {
-  clickSound("reset");
-  if (confirm("ゲームをリセットして最初に戻しますか？")) { socket.emit("reset"); }
-});
-
-socket.on("joined", (id) => { myId = id; });
-socket.on("rejected", (msg) => {
-  statusEl.textContent = msg;
-  startBtn.disabled = true; rollBtn.disabled = true;
-});
-
-socket.on("resetReady", () => {
-  nameInput.value = "";
-  lastShownSeq = 0;
-  animating = false;
-  fanfaredIndexes = {};
-  currentRotation = 0;
-  wheel.style.transition = "none";
-  wheel.style.transform = "rotate(0deg)";
-  setTimeout(() => { wheel.style.transition = ""; }, 50);
-  resultEl.classList.remove("show");
-  myId = null;
-  socket.disconnect();
-  setTimeout(() => { socket.connect(); }, 300);
-});
-
-socket.on("state", (state) => {
-  goal = state.goal;
-  stations = state.stations || [];
-  if (state.routeKey) routeKey = state.routeKey;
-
-  if (!state.started) {
-    lastShownSeq = 0;
-    animating = false;
-    fanfaredIndexes = {};
+  // --- 分岐：岩見沢（上行）右→左 ---
+  for (let i = 0; i < csI; i++) {
+    // i=0(栗山)を右端、増えるほど左へ
+    result.iwamizawa.push({ pos: i, row: UP_ROW, col: RIGHT_COL - i, dir: "L" });
+  }
+  // --- 分岐：追分（下行）右→左 ---
+  for (let i = 0; i < csO; i++) {
+    result.oiwake.push({ pos: i, row: DOWN_ROW, col: RIGHT_COL - i, dir: "L" });
   }
 
-  latestState = state;
+  // --- 共通区間（最上段）左→右ではなく、左端から右へ並べると小樽が右に来てしまう。
+  //     外周ループとして「左へ流して左端で小樽ゴール」にするため、
+  //     共通区間は最上段を右(合流点)→左(小樽) に並べる ---
+  const commonLen = (routes.iwamizawa.length - csI); // = COMMONの長さ
+  // 合流点(白石)を、分岐の左端のすぐ上に置き、そこから左へ小樽まで
+  const mergeCol = RIGHT_COL - (branchMax - 1); // 分岐左端の列
+  for (let j = 0; j < commonLen; j++) {
+    const col = mergeCol - j; // 右(白石)→左(小樽)
+    // 両ルートとも共通区間は同じセルを共有して描画する
+    result.iwamizawa.push({ pos: csI + j, row: TOP_ROW, col: col, dir: "L", common: true });
+    result.oiwake.push({ pos: csO + j, row: TOP_ROW, col: col, dir: "L", common: true });
+  }
+  return result;
+}
 
-  if (!state.started || state.finished) { finalizeState(state); }
-  processNextMove();
-});
-
-// ===== ルート選択UIの更新 =====
-function updateRouteUI(state) {
-  routeLabel.textContent = "ルート：" + (ROUTE_NAMES[routeKey] || "");
-  // 選択中のボタンを強調
-  routeOiwakeBtn.classList.toggle("selected", routeKey === "oiwake");
-  routeIwamizawaBtn.classList.toggle("selected", routeKey === "iwamizawa");
-  // 開始前だけ選べる
-  const canChoose = !state.started;
-  routeArea.style.display = canChoose ? "" : "none";
+// 現在の各プレイヤー位置（lastShownSeqまで反映）
+function positionsUpToShown() {
+  const pos = {};
+  latestState.players.forEach((p, i) => { pos[i] = 0; });
+  const moves = latestState.moves || [];
+  moves.forEach((m) => { if (m.seq <= lastShownSeq) pos[m.index] = m.to; });
+  return pos;
 }
 
 // ===== 盤面描画 =====
-function buildCell(i) {
-  const cell = document.createElement("div");
-  cell.className = "cell";
-  if (i === 0) cell.classList.add("start");
-  if (i === goal) cell.classList.add("goal");
-  if (stKanji(i).length >= 5) cell.classList.add("longName");
+let layout = null;
+let cellMap = {}; // "routeKey:pos" -> cell要素
 
+function buildSign(routeKey, pos, kanjiLen) {
   const sign = document.createElement("div");
   sign.className = "stSign";
+  const st = stationOf(routeKey, pos);
   const kanji = document.createElement("div");
-  kanji.className = "stKanji";
-  kanji.textContent = stKanji(i);
-  sign.appendChild(kanji);
+  kanji.className = "stKanji"; kanji.textContent = st.kanji;
   const kana = document.createElement("div");
-  kana.className = "stKana";
-  kana.textContent = stKana(i);
-  sign.appendChild(kana);
+  kana.className = "stKana"; kana.textContent = st.kana;
   const band = document.createElement("div");
   band.className = "stBand";
   const romaji = document.createElement("div");
-  romaji.className = "stRomaji";
-  romaji.textContent = stRomaji(i);
+  romaji.className = "stRomaji"; romaji.textContent = st.romaji;
   band.appendChild(romaji);
-  sign.appendChild(band);
-  cell.appendChild(sign);
+  sign.appendChild(kanji); sign.appendChild(kana); sign.appendChild(band);
+  return sign;
+}
+
+function makeCell(routeKey, item) {
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.style.gridRow = String(item.row);
+  cell.style.gridColumn = String(item.col);
+  const st = stationOf(routeKey, item.pos);
+  if (item.pos === 0) cell.classList.add("start");
+  const goal = goals[routeKey];
+  const isGoal = item.common && item.pos === goal;
+  if (isGoal) cell.classList.add("goal");
+  if (st.kanji.length >= 6) cell.classList.add("longName");
+
+  cell.appendChild(buildSign(routeKey, item.pos));
+
+  if (item.pos === 0) {
+    const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "START"; cell.appendChild(tag);
+  } else if (isGoal) {
+    const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "GOAL"; cell.appendChild(tag);
+  }
 
   const pawns = document.createElement("div");
   pawns.className = "pawns";
   cell.appendChild(pawns);
-
-  if (i === 0 || i === goal) {
-    const tag = document.createElement("div");
-    tag.className = "stTag";
-    tag.textContent = (i === 0) ? "START" : "GOAL";
-    cell.appendChild(tag);
-  }
   return cell;
 }
 
-function makeTrain(colorIndex, name) {
+function makeTrain(colorIndex, name, dir) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
   const train = document.createElement("div");
   train.className = "train";
+  if (dir === "L") train.classList.add("flip"); // 左向きは反転
   train.style.setProperty("--bandColor", COLORS[colorIndex]);
   train.innerHTML =
     '<div class="trainBody">' +
@@ -359,63 +282,161 @@ function makeTrain(colorIndex, name) {
     '<div class="trainSkirt"></div>' +
     '<div class="trainWheels"><i></i><i></i><i></i><i></i></div>';
   const nm = document.createElement("div");
-  nm.className = "pawnName";
-  nm.textContent = name;
-  wrap.appendChild(train);
-  wrap.appendChild(nm);
+  nm.className = "pawnName"; nm.textContent = name;
+  wrap.appendChild(train); wrap.appendChild(nm);
   return wrap;
 }
 
-function placePawns(cells, positions) {
-  if (!latestState) return;
+function renderBoard(positions, override) {
+  boardEl.innerHTML = "";
+  cellMap = {};
+  layout = computeLayout();
+
+  // 両ルートのセルを描画（共通区間は同じcol/rowに1つだけ置く）
+  const drawnCommon = {};
+  ["iwamizawa", "oiwake"].forEach((rk) => {
+    layout[rk].forEach((item) => {
+      if (item.common) {
+        const key = "C:" + item.col;
+        if (drawnCommon[key]) {
+          cellMap[rk + ":" + item.pos] = drawnCommon[key];
+          return;
+        }
+        const cell = makeCell(rk, item);
+        boardEl.appendChild(cell);
+        drawnCommon[key] = cell;
+        cellMap[rk + ":" + item.pos] = cell;
+      } else {
+        const cell = makeCell(rk, item);
+        boardEl.appendChild(cell);
+        cellMap[rk + ":" + item.pos] = cell;
+      }
+    });
+  });
+
+  // コマ配置
   latestState.players.forEach((p, idx) => {
-    const pos = positions[idx];
-    const cell = cells[pos];
+    let pos = positions[idx];
+    if (override && override.idx === idx) pos = override.pos;
+    const rk = p.routeKey || "oiwake";
+    const item = layout[rk].find((it) => it.pos === pos);
+    const dir = item ? item.dir : "L";
+    const cell = cellMap[rk + ":" + pos];
     if (!cell) return;
     const pawnsEl = cell.querySelector(".pawns");
-    if (!pawnsEl) return;
-    pawnsEl.appendChild(makeTrain(idx, p.name));
+    if (pawnsEl) pawnsEl.appendChild(makeTrain(idx, p.name, dir));
   });
 }
 
-function positionsUpToShown() {
-  const pos = {};
-  latestState.players.forEach((p, i) => { pos[i] = 0; });
+function scrollToMyPawn(pos, rk) {
+  const cell = cellMap[rk + ":" + pos];
+  if (cell) cell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+}
+
+function animateSteps(playerIndex, from, to, onDone) {
+  let current = from;
+  const me = latestState.players.findIndex((p) => p.id === myId);
+  const rk = latestState.players[playerIndex].routeKey || "oiwake";
+  const stepOnce = () => {
+    if (current >= to) { if (onDone) onDone(); return; }
+    current += 1;
+    renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
+    stepSound();
+    if (playerIndex === me) scrollToMyPawn(current, rk);
+    if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
+    setTimeout(stepOnce, 350);
+  };
+  if (from === to) { if (onDone) onDone(); return; }
+  stepOnce();
+}
+
+function processNextMove() {
+  if (animating || !latestState) return;
   const moves = latestState.moves || [];
-  moves.forEach((m) => { if (m.seq <= lastShownSeq) pos[m.index] = m.to; });
-  return pos;
+  const next = moves.find((m) => m.seq === lastShownSeq + 1);
+  if (!next) { finalizeState(latestState); return; }
+
+  animating = true;
+  rollBtn.disabled = true;
+  const rk = latestState.players[next.index].routeKey || "oiwake";
+  statusEl.textContent = next.name + " がルーレットを回しています...";
+  renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
+
+  spinTo(next.dice, () => {
+    const st = stationOf(rk, next.to);
+    statusEl.textContent = next.name + " が " + next.dice + " を出して「" + st.kanji + "」へ";
+    animateSteps(next.index, next.from, next.to, () => {
+      lastShownSeq = next.seq;
+      if (next.to >= goals[rk] && !fanfaredIndexes[next.index]) {
+        fanfaredIndexes[next.index] = true;
+        statusEl.textContent = next.name + " が小樽にゴール！";
+        fanfare();
+      }
+      animating = false;
+      processNextMove();
+    });
+  });
 }
 
-function drawBoard() {
-  boardEl.innerHTML = "";
-  const cells = [];
-  for (let i = 0; i <= goal; i++) {
-    const cell = buildCell(i);
-    cells.push(cell);
-    boardEl.appendChild(cell);
-  }
-  placePawns(cells, positionsUpToShown());
-}
+// ===== ボタン =====
+nameBtn.addEventListener("click", () => {
+  clickSound("name");
+  const name = nameInput.value.trim();
+  if (name) socket.emit("setName", name);
+});
+routeOiwakeBtn.addEventListener("click", () => { clickSound("route"); socket.emit("setRoute", "oiwake"); });
+routeIwamizawaBtn.addEventListener("click", () => { clickSound("route"); socket.emit("setRoute", "iwamizawa"); });
+startBtn.addEventListener("click", () => { clickSound("start"); socket.emit("start"); });
+rollBtn.addEventListener("click", () => { unlockAudio(); rollBtn.disabled = true; socket.emit("roll"); });
+resetBtn.addEventListener("click", () => {
+  clickSound("reset");
+  if (confirm("ゲームをリセットして最初に戻しますか？")) socket.emit("reset");
+});
 
-function drawBoardWithOverride(overrideIdx, overridePos) {
-  boardEl.innerHTML = "";
-  const cells = [];
-  for (let i = 0; i <= goal; i++) {
-    const cell = buildCell(i);
-    cells.push(cell);
-    boardEl.appendChild(cell);
-  }
-  const pos = positionsUpToShown();
-  pos[overrideIdx] = overridePos;
-  placePawns(cells, pos);
+socket.on("joined", (id) => { myId = id; });
+socket.on("rejected", (msg) => { statusEl.textContent = msg; startBtn.disabled = true; rollBtn.disabled = true; });
+
+socket.on("resetReady", () => {
+  nameInput.value = "";
+  lastShownSeq = 0; animating = false; fanfaredIndexes = {}; currentRotation = 0;
+  wheel.style.transition = "none"; wheel.style.transform = "rotate(0deg)";
+  setTimeout(() => { wheel.style.transition = ""; }, 50);
+  resultEl.classList.remove("show");
+  myId = null;
+  socket.disconnect();
+  setTimeout(() => socket.connect(), 300);
+});
+
+socket.on("state", (state) => {
+  routes = state.routes || routes;
+  goals = state.goals || goals;
+  commonStart = state.commonStart || commonStart;
+  if (!state.started) { lastShownSeq = 0; animating = false; fanfaredIndexes = {}; }
+  latestState = state;
+  if (!state.started || state.finished) finalizeState(state);
+  processNextMove();
+});
+
+// ===== ルート選択UI =====
+function updateRouteUI(state) {
+  const me = state.players.find((p) => p.id === myId);
+  const myRoute = me ? (me.routeKey || "oiwake") : "oiwake";
+  routeLabel.textContent = "あなたのルート：" + (ROUTE_NAMES[myRoute] || "");
+  routeOiwakeBtn.classList.toggle("selected", myRoute === "oiwake");
+  routeIwamizawaBtn.classList.toggle("selected", myRoute === "iwamizawa");
+  routeArea.style.display = state.started ? "none" : "";
 }
 
 function finalizeState(state) {
   updateRouteUI(state);
-  drawBoard();
+  renderBoard(positionsUpToShown());
 
   playersEl.innerHTML = state.players
-    .map((p, idx) => `<span style="color:${COLORS[idx]}">●</span>${p.name}（${stKanji(p.pos)}）`)
+    .map((p, idx) => {
+      const rk = p.routeKey || "oiwake";
+      const st = stationOf(rk, p.pos);
+      return `<span style="color:${COLORS[idx]}">●</span>${p.name}（${ROUTE_NAMES[rk]}・${st.kanji}）`;
+    })
     .join("　");
 
   const allMovesShown = !state.moves || state.moves.length === 0 ||
@@ -427,30 +448,30 @@ function finalizeState(state) {
     showResult(state);
     return;
   }
-
   if (!state.started) {
     statusEl.textContent = "ルートと名前を決めて「ゲーム開始」を押してください";
     startBtn.disabled = false; rollBtn.disabled = true;
     resultEl.classList.remove("show");
     return;
   }
-
   startBtn.disabled = true;
   const current = state.players[state.currentTurn];
   const myTurn = current && current.id === myId;
-  statusEl.textContent = myTurn
-    ? "あなたの番です！ルーレットを回してください"
+  statusEl.textContent = myTurn ? "あなたの番です！ルーレットを回してください"
     : (current ? current.name + " の番です..." : "");
   rollBtn.disabled = !myTurn || animating;
 
-  const myIndex = state.players.findIndex(p => p.id === myId);
-  if (myIndex >= 0) scrollToMyPawn(state.players[myIndex].pos);
+  const meIdx = state.players.findIndex((p) => p.id === myId);
+  if (meIdx >= 0) {
+    const rk = state.players[meIdx].routeKey || "oiwake";
+    scrollToMyPawn(state.players[meIdx].pos, rk);
+  }
 }
 
 function showResult(state) {
   if (!state.finished) { resultEl.classList.remove("show"); return; }
-  const ranked = [...state.players].filter(p => p.rank > 0).sort((a, b) => a.rank - b.rank);
-  resultEl.innerHTML = "<h2>🏁 結果（" + (ROUTE_NAMES[routeKey] || "") + "）</h2>" +
-    ranked.map(p => `${p.rank}位：${p.name}`).join("<br>");
+  const ranked = [...state.players].filter((p) => p.rank > 0).sort((a, b) => a.rank - b.rank);
+  resultEl.innerHTML = "<h2>🏁 結果</h2>" +
+    ranked.map((p) => `${p.rank}位：${p.name}（${ROUTE_NAMES[p.routeKey || "oiwake"]}）`).join("<br>");
   resultEl.classList.add("show");
 }
