@@ -1,13 +1,13 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.1
+     バージョン: v3.2
      日付: 2026-06-12
      変更点:
-       1) 盤面を外周ループ配置に変更（栗山=右端中央、上=岩見沢/下=追分、
-          左端で合流し最上段の共通区間を左へ流して小樽ゴール）
-       2) ルーレット＋操作を輪の中央に絶対配置
-       3) 駅看板の見た目は v2.2 を維持（緑帯・黒漢字・水色窓）
-       4) コマは進行方向で自動反転（.train.flip）
+       1) ルーレット＋操作パネルを画面左上に固定(position:fixed)
+          → 盤面を縦横にスクロールしても常に見える
+       2) 自分の番のとき自分のコマへ盤面が自動追従（client.js側）
+       3) 盤面は「上=岩見沢／下=追分で左へ分岐→白石で合流」のシンプル版
+       4) 駅看板の見た目は v2.2 を維持（緑帯・黒漢字・水色窓）
      ※ server.js v3.1 / client.js v3.1 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
@@ -36,41 +36,24 @@
     #resetBtn { background: #c0562b; }
     #resetBtn:hover { background: #a3471f; }
 
-    /* ===== ループ盤面（横スクロール許容・PC前提）===== */
-    .boardScroll {
-      width: 100%;
-      overflow-x: auto;
-      padding: 8px 0;
-    }
-    #board {
-      position: relative;
-      display: grid;
-      /* 列・行は client.js が gridRow/gridColumn を直接指定。
-         ここでは1マスの大きさを固定しておく。 */
-      grid-auto-columns: 150px;
-      grid-auto-rows: minmax(118px, auto);
-      gap: 8px;
-      width: max-content;
-      margin: 0 auto;
-    }
-
-    /* ===== 輪の中央：ルーレット＋操作（絶対配置）===== */
-    .centerPanel {
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      width: 360px;
-      background: rgba(255,255,255,0.95);
+    /* ===== ルーレット＋操作：画面左上に固定 ===== */
+    .fixedPanel {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      width: 320px;
+      max-height: calc(100vh - 20px);
+      overflow-y: auto;
+      background: rgba(255,255,255,0.97);
       border: 2px solid #c9d6e4;
       border-radius: 14px;
       padding: 10px 14px 12px;
-      box-shadow: 0 4px 14px rgba(0,0,0,.12);
+      box-shadow: 0 4px 14px rgba(0,0,0,.18);
       text-align: center;
-      z-index: 10;
+      z-index: 100;
     }
     .nameArea { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; margin-bottom: 6px; }
-    #nameInput { flex: 1 1 150px; padding: 7px 10px; font-size: 15px; border: 1px solid #bbb; border-radius: 6px; }
+    #nameInput { flex: 1 1 140px; padding: 7px 10px; font-size: 15px; border: 1px solid #bbb; border-radius: 6px; }
 
     #routeArea { margin-bottom: 6px; }
     #routeLabel { font-size: 13px; font-weight: bold; color: #1b3a5b; margin-bottom: 4px; }
@@ -78,14 +61,14 @@
     .routeBtn:hover { background: #eafaf0; }
     .routeBtn.selected { background: #1f8b5c; color: #fff; }
 
-    #rouletteWrap { position: relative; width: 170px; height: 184px; margin: 6px auto 2px; }
+    #rouletteWrap { position: relative; width: 160px; height: 174px; margin: 6px auto 2px; }
     #pointer {
       position: absolute; top: 0; left: 50%; transform: translateX(-50%);
       width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent;
       border-top: 16px solid #111; z-index: 5;
     }
     #wheel {
-      display: block; width: 170px; height: 170px; margin: 12px auto 0;
+      display: block; width: 160px; height: 160px; margin: 12px auto 0;
       transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
     }
     #status { font-size: 14px; font-weight: bold; margin: 4px 0; color: #1b3a5b; }
@@ -93,7 +76,22 @@
     .btnRow { margin-top: 6px; }
     .btnRow button { margin: 2px; }
 
-    /* ===== 駅セル（v2.2の見た目を維持）===== */
+    /* ===== ループ盤面 ===== */
+    .boardScroll { width: 100%; overflow-x: auto; padding: 8px 0; }
+    #board {
+      position: relative;
+      display: grid;
+      grid-auto-columns: 150px;
+      grid-auto-rows: minmax(118px, auto);
+      gap: 8px;
+      width: max-content;
+      margin: 0 auto;
+      /* 左上の固定パネルと重ならないよう、盤面に左の余白を確保 */
+      padding-left: 340px;
+      min-height: 70vh;
+    }
+
+    /* ===== 駅セル（v2.2の見た目）===== */
     .cell {
       background: #f7f7f7; border: 1px solid #cfcfcf; border-radius: 6px;
       padding: 6px 5px 5px; display: flex; flex-direction: column;
@@ -107,7 +105,6 @@
     }
     .cell.goal .stTag { background: #d4a017; }
 
-    /* 駅名標（v2.2）*/
     .stSign {
       background: #fff; border: 2px solid #2a6db0; border-radius: 5px;
       padding: 5px 4px 0; display: flex; flex-direction: column;
@@ -121,7 +118,6 @@
     .cell.longName .stKana  { font-size: 8.5px; line-height: 1.1; white-space: nowrap; }
     .cell.longName .stRomaji{ font-size: 8px; white-space: nowrap; }
 
-    /* 電車スペース */
     .pawns {
       min-height: 40px; margin-top: 5px; display: flex; flex-direction: row;
       flex-wrap: wrap; gap: 4px; justify-content: center; align-items: flex-start;
@@ -132,7 +128,7 @@
       max-width: 56px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
     }
 
-    /* ===== 電車コマ：721系風（右向き）／.flipで左向き ===== */
+    /* 電車コマ 721系風 / .flipで左向き */
     .train { position: relative; width: 54px; height: 26px; }
     .train.flip { transform: scaleX(-1); }
     .train .trainBody {
@@ -150,7 +146,7 @@
     .train .trainWheels { position: absolute; bottom: 0; left: 6px; right: 6px; display: flex; justify-content: space-between; }
     .train .trainWheels i { display: block; width: 5px; height: 5px; background: #333; border-radius: 50%; border: 1px solid #666; }
 
-    /* ===== 結果 ===== */
+    /* 結果 */
     #result {
       max-width: 920px; margin: 14px auto; background: #fff; border-radius: 10px;
       padding: 12px; font-size: 15px; line-height: 1.9;
@@ -163,37 +159,37 @@
 <body>
   <h1>みんなですごろく 〜栗山から小樽〜</h1>
 
+  <!-- 画面左上に固定するパネル -->
+  <div class="fixedPanel">
+    <div class="nameArea" id="nameArea">
+      <input id="nameInput" type="text" maxlength="12" placeholder="名前を入力" />
+      <button id="nameBtn">名前を決定</button>
+    </div>
+
+    <div id="routeArea">
+      <div id="routeLabel">あなたのルート：</div>
+      <button id="routeOiwakeBtn" class="routeBtn">追分経由</button>
+      <button id="routeIwamizawaBtn" class="routeBtn">岩見沢経由</button>
+    </div>
+
+    <div id="rouletteWrap">
+      <div id="pointer"></div>
+      <canvas id="wheel" width="260" height="260"></canvas>
+    </div>
+
+    <div id="status">接続中...</div>
+    <div id="players"></div>
+
+    <div class="btnRow">
+      <button id="startBtn">ゲーム開始</button>
+      <button id="rollBtn">ルーレットを回す</button>
+      <button id="resetBtn">リセット</button>
+    </div>
+  </div>
+
   <div class="boardScroll">
     <div id="board">
       <!-- 駅セルは client.js が gridRow/gridColumn 指定で配置 -->
-
-      <!-- 輪の中央パネル：ルーレット＋操作 -->
-      <div class="centerPanel">
-        <div class="nameArea" id="nameArea">
-          <input id="nameInput" type="text" maxlength="12" placeholder="名前を入力" />
-          <button id="nameBtn">名前を決定</button>
-        </div>
-
-        <div id="routeArea">
-          <div id="routeLabel">あなたのルート：</div>
-          <button id="routeOiwakeBtn" class="routeBtn">追分経由</button>
-          <button id="routeIwamizawaBtn" class="routeBtn">岩見沢経由</button>
-        </div>
-
-        <div id="rouletteWrap">
-          <div id="pointer"></div>
-          <canvas id="wheel" width="260" height="260"></canvas>
-        </div>
-
-        <div id="status">接続中...</div>
-        <div id="players"></div>
-
-        <div class="btnRow">
-          <button id="startBtn">ゲーム開始</button>
-          <button id="rollBtn">ルーレットを回す</button>
-          <button id="resetBtn">リセット</button>
-        </div>
-      </div>
     </div>
   </div>
 
