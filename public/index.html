@@ -1,15 +1,14 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v1.9
+     バージョン: v2.0
      日付: 2026-06-12
      変更点:
-       1) 長い駅名（.longName 例:サッポロビール庭園）の
-          漢字・ひらがなを小さくして1段に収める
-       2) 電車コマをJR北海道721系風のデフォルメに変更
-          （銀色ステンレス車体＋プレイヤー色の帯／進行方向＝右向き）
-       ※ 名前決定音は client.js v1.9 側で対応済み
-     v1.8: 表示崩れ修正・横幅自動列数・リセット常時・満員詰まり解消
-     ※ server.js v1.9(=v1.8と同一) / client.js v1.9 とセットで使用
+       1) 駅名標(.stSign)の高さを全駅で固定し、縦幅を揃える
+          （サッポロビール庭園だけ高くなる不具合を解消）
+       2) ボタン表記「もう一度遊ぶ」→「リセット」
+       ※ ボタン音・リセット挙動は client.js / server.js v2.0 側で対応
+     v1.9: 長い駅名1段・721系風電車 ほか
+     ※ server.js v2.0 / client.js v2.0 とセットで使用
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -139,7 +138,7 @@
     }
     .cell.goal .stTag { background: #d4a017; }
 
-    /* ===== 駅名標（看板）風 ===== */
+    /* ===== 駅名標（看板）風：高さを固定して全駅そろえる ===== */
     .stSign {
       background: #fff;
       border: 2px solid #2a6db0;
@@ -148,6 +147,9 @@
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: flex-start;
+      height: 62px;            /* ★ 全駅で固定 → 縦幅が揃う */
+      overflow: hidden;
     }
     .stKanji {
       font-size: 16px;
@@ -169,7 +171,7 @@
       width: 100%;
       background: #8cc63f;
       border-radius: 3px;
-      margin-top: 4px;
+      margin-top: auto;        /* 帯は常に下端へ */
       padding: 2px 2px 3px;
     }
     .stRomaji {
@@ -185,12 +187,12 @@
     .cell.longName .stKanji {
       font-size: 11px;
       line-height: 1.1;
-      white-space: nowrap;   /* 1段に収める */
+      white-space: nowrap;
     }
     .cell.longName .stKana {
       font-size: 8.5px;
       line-height: 1.1;
-      white-space: nowrap;   /* 1段に収める */
+      white-space: nowrap;
     }
     .cell.longName .stRomaji {
       font-size: 8px;
@@ -232,7 +234,6 @@
       width: 42px;
       height: 24px;
     }
-    /* 銀色（ステンレス）の車体。右側を少し丸めて先頭=進行方向に */
     .train .trainBody {
       position: relative;
       width: 42px;
@@ -242,7 +243,6 @@
       border-radius: 4px 9px 4px 4px;
       overflow: hidden;
     }
-    /* 窓（上の方に並ぶ）*/
     .train .trainWindows {
       position: absolute;
       top: 3px;
@@ -259,7 +259,6 @@
       border: 1px solid #aacbe6;
       border-radius: 1px;
     }
-    /* プレイヤー色の帯（窓の下に1本）*/
     .train .trainBand {
       position: absolute;
       left: 0; right: 0;
@@ -268,7 +267,6 @@
       background: var(--bandColor, #2ecc71);
       z-index: 1;
     }
-    /* 先頭（右）の前面ガラス */
     .train .trainNose {
       position: absolute;
       right: 2px;
@@ -280,7 +278,6 @@
       border-radius: 1px 4px 1px 1px;
       z-index: 2;
     }
-    /* 先頭のライト */
     .train .trainLight {
       position: absolute;
       right: 3px;
@@ -343,7 +340,7 @@
     <div style="text-align:center; margin-top:8px;">
       <button id="startBtn">ゲーム開始</button>
       <button id="rollBtn">ルーレットを回す</button>
-      <button id="resetBtn">もう一度遊ぶ</button>
+      <button id="resetBtn">リセット</button>
     </div>
   </div>
 

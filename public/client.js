@@ -1,15 +1,14 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.9
+   バージョン: v2.0
    日付: 2026-06-12
-   v1.9での変更点:
-     - 「名前を決定」ボタンを押したときに音を鳴らす
-     - 長い駅名（サッポロビール庭園）のセルに longName クラスを付与し
-       index.html 側で文字を小さくして1段に収める
-     - 電車コマをJR北海道721系風のデフォルメに変更
-       （銀色車体＋プレイヤー色の帯／進行方向＝右向き）
-   v1.8: 表示崩れ修正/リセット常時/満員詰まり解消 ほか
-   ※ server.js / index.html も v1.9 とセットで使うこと
+   v2.0での変更点:
+     - リセット時 resetDone を受け取り、名前入力欄を空にして待機へ戻す
+       （前に入力した名前が残らない）
+     - 全ボタン（名前を決定/ゲーム開始/リセット）で音を鳴らす
+     - リセットボタンの確認文言を整理
+   v1.9: 名前決定音・長い駅名1段・721系風電車 ほか
+   ※ server.js / index.html も v2.0 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -43,7 +42,6 @@ const ctx = wheel.getContext("2d");
 const nameInput = document.getElementById("nameInput");
 const nameBtn = document.getElementById("nameBtn");
 
-// リセットボタンは最初から常に表示
 resetBtn.style.display = "";
 
 // ===== 音 =====
@@ -63,11 +61,13 @@ function beep(freq, durationMs, type = "square", volume = 0.2) {
   osc.start();
   osc.stop(audioCtx.currentTime + durationMs / 1000);
 }
-// 「名前を決定」を押したときの確定音（ピコッと2音）
-function nameSound() {
+// ボタン共通のクリック音（種類で音色を少し変える）
+function clickSound(kind) {
   ensureAudio();
-  beep(880, 90, "square", 0.22);
-  setTimeout(() => beep(1320, 120, "square", 0.22), 90);
+  if (kind === "name")  { beep(880, 90, "square", 0.22); setTimeout(() => beep(1320, 120, "square", 0.22), 90); }
+  else if (kind === "start") { beep(523, 110, "triangle", 0.25); setTimeout(() => beep(784, 150, "triangle", 0.25), 110); }
+  else if (kind === "reset") { beep(440, 110, "sawtooth", 0.2); setTimeout(() => beep(330, 140, "sawtooth", 0.2), 110); }
+  else { beep(700, 90, "square", 0.2); }
 }
 let tickTimer = null;
 function startTicking() {
@@ -241,13 +241,14 @@ function processNextMove() {
 
 // ===== 名前・ボタン =====
 nameBtn.addEventListener("click", () => {
-  nameSound();                       // 名前決定の音
+  clickSound("name");
   const name = nameInput.value.trim();
   if (name) socket.emit("setName", name);
 });
-startBtn.addEventListener("click", () => { ensureAudio(); socket.emit("start"); });
+startBtn.addEventListener("click", () => { clickSound("start"); socket.emit("start"); });
 rollBtn.addEventListener("click", () => { ensureAudio(); rollBtn.disabled = true; socket.emit("roll"); });
 resetBtn.addEventListener("click", () => {
+  clickSound("reset");
   if (confirm("ゲームをリセットして最初に戻しますか？")) {
     socket.emit("reset");
   }
@@ -257,6 +258,14 @@ socket.on("joined", (id) => { myId = id; });
 socket.on("rejected", (msg) => {
   statusEl.textContent = msg;
   startBtn.disabled = true; rollBtn.disabled = true;
+});
+
+// リセット完了：名前欄を空にして演出状態も初期化
+socket.on("resetDone", () => {
+  nameInput.value = "";
+  lastShownSeq = 0;
+  animating = false;
+  fanfaredIndexes = {};
 });
 
 socket.on("state", (state) => {
@@ -284,7 +293,6 @@ function buildCell(i) {
   if (i === 0) cell.classList.add("start");
   if (i === goal) cell.classList.add("goal");
 
-  // 長い駅名（5文字以上の漢字）は文字を小さくして1段に収める
   if (stKanji(i).length >= 5) cell.classList.add("longName");
 
   const sign = document.createElement("div");
@@ -323,7 +331,6 @@ function buildCell(i) {
   return cell;
 }
 
-// JR北海道721系風のデフォルメ電車（銀色車体＋プレイヤー色の帯／右向き）
 function makeTrain(colorIndex, name) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
