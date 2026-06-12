@@ -1,13 +1,12 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.4
+   バージョン: v1.5
    日付: 2026-06-12
    このファイル: ブラウザ側（画面表示・ルーレット演出・音）
-   v1.4での変更点:
-     - 駅名を「駅名標ふう」に表示（上にひらがな、下に漢字）
-       サーバーの stations は {kanji, kana} の形に変わった
-   v1.3: 駅名表示, v1.0〜v1.2: moves順番演出・止まる位置・右回り
-   ※ server.js / index.html も v1.4 とセットで使うこと
+   v1.5での変更点:
+     - 各マスを駅名標ふう3段（漢字・ひらがな・ローマ字）で表示
+   v1.4: 漢字+ひらがな表示, v1.0〜v1.3: 演出方式・38駅化など
+   ※ server.js / index.html も v1.5 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -21,7 +20,7 @@ const WHEEL_COLORS = [
 
 let myId = null;
 let goal = 37;
-let stations = [];         // {kanji, kana} の配列
+let stations = [];         // {kanji, kana, romaji} の配列
 let currentRotation = 0;
 let lastWinnerShown = false;
 
@@ -162,16 +161,9 @@ function spinTo(dice, onStop) {
 }
 
 // ===== 駅名の取り出し（保険つき）=====
-function stKanji(i) {
-  const s = stations[i];
-  if (!s) return String(i);
-  return s.kanji || String(i);
-}
-function stKana(i) {
-  const s = stations[i];
-  if (!s) return "";
-  return s.kana || "";
-}
+function stKanji(i) { const s = stations[i]; return s ? (s.kanji || String(i)) : String(i); }
+function stKana(i)  { const s = stations[i]; return s ? (s.kana || "") : ""; }
+function stRomaji(i){ const s = stations[i]; return s ? (s.romaji || "") : ""; }
 
 // ===== コマを1歩ずつ進める =====
 function animateSteps(playerIndex, from, to, onDone) {
@@ -241,26 +233,35 @@ socket.on("state", (state) => {
   processNextMove();
 });
 
-// ===== 盤面描画（駅名標ふう）=====
+// ===== 盤面描画（駅名標ふう3段：漢字・ひらがな・ローマ字）=====
 function buildCell(i) {
   const cell = document.createElement("div");
   cell.className = "cell";
   if (i === 0) cell.classList.add("start");
   if (i === goal) cell.classList.add("goal");
 
-  // ひらがな（上、大きめ）
-  const kana = document.createElement("div");
-  kana.className = "stKana";
-  kana.textContent = stKana(i);
-  cell.appendChild(kana);
-
-  // 漢字（下、小さめ）
+  // 漢字（一番上）
   const kanji = document.createElement("div");
   kanji.className = "stKanji";
   kanji.textContent = stKanji(i);
   cell.appendChild(kanji);
 
-  // START / GOAL の小さなラベル
+  // ひらがな（その下）
+  const kana = document.createElement("div");
+  kana.className = "stKana";
+  kana.textContent = stKana(i);
+  cell.appendChild(kana);
+
+  // 黄緑の帯＋ローマ字
+  const band = document.createElement("div");
+  band.className = "stBand";
+  const romaji = document.createElement("div");
+  romaji.className = "stRomaji";
+  romaji.textContent = stRomaji(i);
+  band.appendChild(romaji);
+  cell.appendChild(band);
+
+  // START / GOAL の小ラベル
   if (i === 0 || i === goal) {
     const tag = document.createElement("div");
     tag.className = "stTag";

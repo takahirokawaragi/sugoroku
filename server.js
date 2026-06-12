@@ -1,13 +1,12 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v1.4
+   バージョン: v1.5
    日付: 2026-06-12
    このファイル: サーバー側（ゲームの進行・順番・位置の管理）
-   v1.4での変更点:
-     - 駅名に「漢字」と「ひらがな(読み)」の両方を持たせた
-       （client側で駅名標ふうに表示するため）
-   v1.3: マスを栗山〜小樽の38駅に変更（0=栗山, 37=小樽ゴール）
-   ※ client.js / index.html も v1.4 とセットで使うこと
+   v1.5での変更点:
+     - 駅名に「ローマ字(romaji)」を追加（駅名標ふう表示のため）
+   v1.4: 漢字+ひらがな, v1.3: 38駅化, v1.0〜v1.2: 演出方式など
+   ※ client.js / index.html も v1.5 とセットで使うこと
    ========================================================= */
 
 const express = require("express");
@@ -23,46 +22,46 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/health", (req, res) => res.send("ok"));
 
 // ===== 駅名リスト（栗山スタート → 小樽ゴール、全38駅）=====
-// kanji = 漢字表記, kana = ひらがな（読み）
+// kanji=漢字, kana=ひらがな, romaji=ローマ字
 const STATIONS = [
-  { kanji: "栗山", kana: "くりやま" },
-  { kanji: "由仁", kana: "ゆに" },
-  { kanji: "古山", kana: "ふるさん" },
-  { kanji: "三川", kana: "みかわ" },
-  { kanji: "追分", kana: "おいわけ" },
-  { kanji: "安平", kana: "あびら" },
-  { kanji: "早来", kana: "はやきた" },
-  { kanji: "遠浅", kana: "とあさ" },
-  { kanji: "沼ノ端", kana: "ぬまのはた" },
-  { kanji: "植苗", kana: "うえなえ" },
-  { kanji: "南千歳", kana: "みなみちとせ" },
-  { kanji: "千歳", kana: "ちとせ" },
-  { kanji: "長都", kana: "おさつ" },
-  { kanji: "サッポロビール庭園", kana: "さっぽろびーるていえん" },
-  { kanji: "恵庭", kana: "えにわ" },
-  { kanji: "恵み野", kana: "めぐみの" },
-  { kanji: "島松", kana: "しままつ" },
-  { kanji: "北広島", kana: "きたひろしま" },
-  { kanji: "上野幌", kana: "かみのっぽろ" },
-  { kanji: "新札幌", kana: "しんさっぽろ" },
-  { kanji: "平和", kana: "へいわ" },
-  { kanji: "白石", kana: "しろいし" },
-  { kanji: "苗穂", kana: "なえぼ" },
-  { kanji: "札幌", kana: "さっぽろ" },
-  { kanji: "桑園", kana: "そうえん" },
-  { kanji: "琴似", kana: "ことに" },
-  { kanji: "発寒中央", kana: "はっさむちゅうおう" },
-  { kanji: "発寒", kana: "はっさむ" },
-  { kanji: "稲積公園", kana: "いなづみこうえん" },
-  { kanji: "手稲", kana: "ていね" },
-  { kanji: "稲穂", kana: "いなほ" },
-  { kanji: "星置", kana: "ほしおき" },
-  { kanji: "ほしみ", kana: "ほしみ" },
-  { kanji: "銭函", kana: "ぜにばこ" },
-  { kanji: "朝里", kana: "あさり" },
-  { kanji: "小樽築港", kana: "おたるちっこう" },
-  { kanji: "南小樽", kana: "みなみおたる" },
-  { kanji: "小樽", kana: "おたる" },
+  { kanji: "栗山", kana: "くりやま", romaji: "Kuriyama" },
+  { kanji: "由仁", kana: "ゆに", romaji: "Yuni" },
+  { kanji: "古山", kana: "ふるさん", romaji: "Furusan" },
+  { kanji: "三川", kana: "みかわ", romaji: "Mikawa" },
+  { kanji: "追分", kana: "おいわけ", romaji: "Oiwake" },
+  { kanji: "安平", kana: "あびら", romaji: "Abira" },
+  { kanji: "早来", kana: "はやきた", romaji: "Hayakita" },
+  { kanji: "遠浅", kana: "とあさ", romaji: "Toasa" },
+  { kanji: "沼ノ端", kana: "ぬまのはた", romaji: "Numanohata" },
+  { kanji: "植苗", kana: "うえなえ", romaji: "Uenae" },
+  { kanji: "南千歳", kana: "みなみちとせ", romaji: "Minami-Chitose" },
+  { kanji: "千歳", kana: "ちとせ", romaji: "Chitose" },
+  { kanji: "長都", kana: "おさつ", romaji: "Osatsu" },
+  { kanji: "サッポロビール庭園", kana: "さっぽろびーるていえん", romaji: "Sapporo Beer Teien" },
+  { kanji: "恵庭", kana: "えにわ", romaji: "Eniwa" },
+  { kanji: "恵み野", kana: "めぐみの", romaji: "Megumino" },
+  { kanji: "島松", kana: "しままつ", romaji: "Shimamatsu" },
+  { kanji: "北広島", kana: "きたひろしま", romaji: "Kita-Hiroshima" },
+  { kanji: "上野幌", kana: "かみのっぽろ", romaji: "Kami-Nopporo" },
+  { kanji: "新札幌", kana: "しんさっぽろ", romaji: "Shin-Sapporo" },
+  { kanji: "平和", kana: "へいわ", romaji: "Heiwa" },
+  { kanji: "白石", kana: "しろいし", romaji: "Shiroishi" },
+  { kanji: "苗穂", kana: "なえぼ", romaji: "Naebo" },
+  { kanji: "札幌", kana: "さっぽろ", romaji: "Sapporo" },
+  { kanji: "桑園", kana: "そうえん", romaji: "Sōen" },
+  { kanji: "琴似", kana: "ことに", romaji: "Kotoni" },
+  { kanji: "発寒中央", kana: "はっさむちゅうおう", romaji: "Hassamu-Chūō" },
+  { kanji: "発寒", kana: "はっさむ", romaji: "Hassamu" },
+  { kanji: "稲積公園", kana: "いなづみこうえん", romaji: "Inazumi-Kōen" },
+  { kanji: "手稲", kana: "ていね", romaji: "Teine" },
+  { kanji: "稲穂", kana: "いなほ", romaji: "Inaho" },
+  { kanji: "星置", kana: "ほしおき", romaji: "Hoshioki" },
+  { kanji: "ほしみ", kana: "ほしみ", romaji: "Hoshimi" },
+  { kanji: "銭函", kana: "ぜにばこ", romaji: "Zenibako" },
+  { kanji: "朝里", kana: "あさり", romaji: "Asari" },
+  { kanji: "小樽築港", kana: "おたるちっこう", romaji: "Otaru-Chikkō" },
+  { kanji: "南小樽", kana: "みなみおたる", romaji: "Minami-Otaru" },
+  { kanji: "小樽", kana: "おたる", romaji: "Otaru" },
 ];
 
 const GOAL = STATIONS.length - 1; // = 37（小樽がゴール）
