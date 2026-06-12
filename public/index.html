@@ -1,17 +1,15 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v1.8
+     バージョン: v1.9
      日付: 2026-06-12
      変更点:
-       1) 駅の並びを画面の横幅に合わせて自動で列数を変える
-          （repeat(auto-fill) で広い画面は多列・狭い画面は少列）
-       2) client.js v1.8 のクラス名に合わせて駅名標/電車のCSSを完備
-          （stSign / stKanji / stKana / stBand / stRomaji / stTag /
-            pawns / pawnWrap / train ...）→ 表示崩れを解消
-       3) 駅名標は「漢字→ひらがな→ローマ字帯」の順で固定
-       4) その下に電車専用スペース(.pawns)を必ず確保
-       5) リセットボタンは常に表示（CSSで隠さない）
-     ※ server.js v1.8 / client.js v1.8 とセットで使用
+       1) 長い駅名（.longName 例:サッポロビール庭園）の
+          漢字・ひらがなを小さくして1段に収める
+       2) 電車コマをJR北海道721系風のデフォルメに変更
+          （銀色ステンレス車体＋プレイヤー色の帯／進行方向＝右向き）
+       ※ 名前決定音は client.js v1.9 側で対応済み
+     v1.8: 表示崩れ修正・横幅自動列数・リセット常時・満員詰まり解消
+     ※ server.js v1.9(=v1.8と同一) / client.js v1.9 とセットで使用
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -128,7 +126,6 @@
     .cell.start { background: #fff1ea; }
     .cell.goal  { background: #fff8e2; }
 
-    /* START / GOAL タグ */
     .stTag {
       position: absolute;
       top: -8px;
@@ -158,7 +155,7 @@
       color: #111;
       text-align: center;
       line-height: 1.15;
-      word-break: break-all;     /* 長い駅名でも収まる */
+      word-break: break-all;
     }
     .stKana {
       font-size: 11px;
@@ -166,9 +163,8 @@
       text-align: center;
       line-height: 1.25;
       margin-top: 2px;
-      word-break: break-all;     /* 長い読みは2段以上に折り返す */
+      word-break: break-all;
     }
-    /* ローマ字の黄緑帯（看板の下のグリーンバンド）*/
     .stBand {
       width: 100%;
       background: #8cc63f;
@@ -182,12 +178,28 @@
       color: #fff;
       text-align: center;
       line-height: 1.2;
-      word-break: break-all;     /* 長いローマ字も折り返して収まる */
+      word-break: break-all;
     }
 
-    /* ===== 電車専用スペース（駅名標の下・常にある）===== */
+    /* ===== 長い駅名は文字を小さくして1段に収める ===== */
+    .cell.longName .stKanji {
+      font-size: 11px;
+      line-height: 1.1;
+      white-space: nowrap;   /* 1段に収める */
+    }
+    .cell.longName .stKana {
+      font-size: 8.5px;
+      line-height: 1.1;
+      white-space: nowrap;   /* 1段に収める */
+    }
+    .cell.longName .stRomaji {
+      font-size: 8px;
+      white-space: nowrap;
+    }
+
+    /* ===== 電車専用スペース ===== */
     .pawns {
-      min-height: 34px;
+      min-height: 36px;
       margin-top: 5px;
       display: flex;
       flex-direction: row;
@@ -200,7 +212,7 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      width: 40px;
+      width: 44px;
     }
     .pawnName {
       font-size: 9px;
@@ -208,64 +220,82 @@
       text-align: center;
       line-height: 1.1;
       margin-top: 1px;
-      max-width: 40px;
+      max-width: 44px;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
     }
 
-    /* ===== 電車コマ（CSSで描画・右向き）===== */
+    /* ===== 電車コマ：JR北海道721系風デフォルメ（右向き）===== */
     .train {
       position: relative;
-      width: 38px;
-      height: 22px;
+      width: 42px;
+      height: 24px;
     }
+    /* 銀色（ステンレス）の車体。右側を少し丸めて先頭=進行方向に */
     .train .trainBody {
       position: relative;
-      width: 38px;
-      height: 16px;
-      background: var(--bodyColor, #e74c3c);
-      /* 右側（先頭）を丸める＝進行方向 */
-      border-radius: 5px 11px 4px 4px;
-      border: 1px solid rgba(0,0,0,.25);
+      width: 42px;
+      height: 17px;
+      background: linear-gradient(#f4f6f8, #cdd3d8 55%, #aeb4ba);
+      border: 1px solid #8a9097;
+      border-radius: 4px 9px 4px 4px;
       overflow: hidden;
     }
-    .train .trainBand {
-      position: absolute;
-      left: 0; right: 0;
-      top: 9px;
-      height: 3px;
-      background: rgba(255,255,255,.85);
-    }
+    /* 窓（上の方に並ぶ）*/
     .train .trainWindows {
       position: absolute;
-      top: 2px;
-      left: 4px;
+      top: 3px;
+      left: 5px;
       display: flex;
       gap: 2px;
+      z-index: 2;
     }
     .train .trainWindows span {
       display: block;
-      width: 5px;
-      height: 4px;
-      background: #cfeaff;
+      width: 6px;
+      height: 5px;
+      background: #d4ecff;
+      border: 1px solid #aacbe6;
       border-radius: 1px;
     }
-    /* 先頭（右）の顔・ライト */
-    .train .trainFace {
+    /* プレイヤー色の帯（窓の下に1本）*/
+    .train .trainBand {
+      position: absolute;
+      left: 0; right: 0;
+      top: 11px;
+      height: 3px;
+      background: var(--bandColor, #2ecc71);
+      z-index: 1;
+    }
+    /* 先頭（右）の前面ガラス */
+    .train .trainNose {
       position: absolute;
       right: 2px;
-      top: 10px;
-      width: 4px;
-      height: 4px;
+      top: 2px;
+      width: 6px;
+      height: 6px;
+      background: #cfe8ff;
+      border: 1px solid #aacbe6;
+      border-radius: 1px 4px 1px 1px;
+      z-index: 2;
+    }
+    /* 先頭のライト */
+    .train .trainLight {
+      position: absolute;
+      right: 3px;
+      bottom: 2px;
+      width: 3px;
+      height: 3px;
       background: #fff3b0;
       border-radius: 50%;
+      z-index: 2;
     }
     .train .trainWheels {
       position: absolute;
       bottom: 0;
-      left: 4px;
-      right: 4px;
+      left: 5px;
+      right: 5px;
       display: flex;
       justify-content: space-between;
     }

@@ -1,14 +1,15 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.8
+   バージョン: v1.9
    日付: 2026-06-12
-   v1.8での変更点:
-     - リセットボタンを常に表示（いつでも押せる）
-     - リセットはサーバーの新状態で名前入力に戻る方式に対応
-       （forceReload に依存しない）
-     - 駅名標/電車コマのクラス名を index.html v1.8 のCSSと完全一致
-   v1.7: 各自ゴールでファンファーレ、電車コマ ほか
-   ※ server.js / index.html も v1.8 とセットで使うこと
+   v1.9での変更点:
+     - 「名前を決定」ボタンを押したときに音を鳴らす
+     - 長い駅名（サッポロビール庭園）のセルに longName クラスを付与し
+       index.html 側で文字を小さくして1段に収める
+     - 電車コマをJR北海道721系風のデフォルメに変更
+       （銀色車体＋プレイヤー色の帯／進行方向＝右向き）
+   v1.8: 表示崩れ修正/リセット常時/満員詰まり解消 ほか
+   ※ server.js / index.html も v1.9 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -61,6 +62,12 @@ function beep(freq, durationMs, type = "square", volume = 0.2) {
   gain.connect(audioCtx.destination);
   osc.start();
   osc.stop(audioCtx.currentTime + durationMs / 1000);
+}
+// 「名前を決定」を押したときの確定音（ピコッと2音）
+function nameSound() {
+  ensureAudio();
+  beep(880, 90, "square", 0.22);
+  setTimeout(() => beep(1320, 120, "square", 0.22), 90);
 }
 let tickTimer = null;
 function startTicking() {
@@ -234,7 +241,7 @@ function processNextMove() {
 
 // ===== 名前・ボタン =====
 nameBtn.addEventListener("click", () => {
-  ensureAudio();
+  nameSound();                       // 名前決定の音
   const name = nameInput.value.trim();
   if (name) socket.emit("setName", name);
 });
@@ -256,7 +263,6 @@ socket.on("state", (state) => {
   goal = state.goal;
   stations = state.stations || [];
 
-  // リセット等でゲームがまっさらに戻ったら、演出の進行状況も初期化
   if (!state.started) {
     lastShownSeq = 0;
     animating = false;
@@ -277,6 +283,9 @@ function buildCell(i) {
   cell.className = "cell";
   if (i === 0) cell.classList.add("start");
   if (i === goal) cell.classList.add("goal");
+
+  // 長い駅名（5文字以上の漢字）は文字を小さくして1段に収める
+  if (stKanji(i).length >= 5) cell.classList.add("longName");
 
   const sign = document.createElement("div");
   sign.className = "stSign";
@@ -314,18 +323,20 @@ function buildCell(i) {
   return cell;
 }
 
+// JR北海道721系風のデフォルメ電車（銀色車体＋プレイヤー色の帯／右向き）
 function makeTrain(colorIndex, name) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
 
   const train = document.createElement("div");
   train.className = "train";
-  train.style.setProperty("--bodyColor", COLORS[colorIndex]);
+  train.style.setProperty("--bandColor", COLORS[colorIndex]);
   train.innerHTML =
     '<div class="trainBody">' +
+      '<div class="trainWindows"><span></span><span></span><span></span><span></span></div>' +
       '<div class="trainBand"></div>' +
-      '<div class="trainWindows"><span></span><span></span><span></span></div>' +
-      '<div class="trainFace"></div>' +
+      '<div class="trainNose"></div>' +
+      '<div class="trainLight"></div>' +
     '</div>' +
     '<div class="trainWheels"><i></i><i></i></div>';
 
