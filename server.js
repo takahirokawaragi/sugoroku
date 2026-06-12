@@ -1,11 +1,14 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v1.7
+   バージョン: v1.8
    日付: 2026-06-12
-   v1.7での変更点:
-     - リセットを確実に初期化（誰かが勝手に始まらないように）
-   v1.6: リセット/ファンファーレ ほか、v1.5以前: 駅名表示など
-   ※ client.js / index.html も v1.7 とセットで使うこと
+   v1.8での変更点:
+     - リセットを「再読み込み」ではなくサーバー側で確実に初期化し、
+       新しい初期状態を全員に配信する方式へ変更
+       （誰も勝手にゲームが始まらない／満員で詰まらない）
+     - リセット後は started=false の空っぽ状態から名前入力に戻る
+   v1.7: リセット確実初期化、v1.6: リセット/ファンファーレ ほか
+   ※ client.js / index.html も v1.8 とセットで使うこと
    ========================================================= */
 
 const express = require("express");
@@ -79,7 +82,8 @@ function broadcastState() {
   });
 }
 
-// リセット：全部まっさらにして、各ブラウザに「再読み込みして」と伝える
+// リセット：サーバー側を確実に空っぽに戻し、その新状態を全員へ配信
+// （再読み込みに頼らないので、満員/進行中で詰まらない）
 function resetGame() {
   players = [];
   currentTurn = 0;
@@ -88,7 +92,7 @@ function resetGame() {
   finishedCount = 0;
   moves = [];
   seqCounter = 0;
-  io.emit("forceReload"); // 全員のブラウザを最初から入り直させる
+  broadcastState();
 }
 
 function startGame() {
@@ -116,6 +120,7 @@ function advanceTurn() {
 function rollDice() {
   if (!started || finished) return;
   const player = players[currentTurn];
+  if (!player) return;
   if (player.rank !== 0) { advanceTurn(); maybeRunCPU(); return; }
 
   const dice = Math.floor(Math.random() * 10) + 1;
@@ -145,12 +150,17 @@ function rollDice() {
 
 function maybeRunCPU() {
   if (!started || finished) return;
-  if (players[currentTurn].isCPU) setTimeout(rollDice, 6500);
+  if (players[currentTurn] && players[currentTurn].isCPU) setTimeout(rollDice, 6500);
 }
 
 io.on("connection", (socket) => {
-  if (started || players.filter((p) => !p.isCPU).length >= MAX_PLAYERS) {
-    socket.emit("rejected", "ゲームは満員または進行中です");
+  // ゲーム中の途中参加だけ拒否（満員でない待機中なら必ず入れる）
+  if (started) {
+    socket.emit("rejected", "ゲームは進行中です。リセットすると参加できます。");
+    return;
+  }
+  if (players.filter((p) => !p.isCPU).length >= MAX_PLAYERS) {
+    socket.emit("rejected", "ゲームは満員です。リセットすると参加できます。");
     return;
   }
 
@@ -174,16 +184,17 @@ io.on("connection", (socket) => {
 
   socket.on("roll", () => {
     if (!started || finished) return;
-    if (players[currentTurn].id === socket.id) rollDice();
+    if (players[currentTurn] && players[currentTurn].id === socket.id) rollDice();
   });
 
+  // リセットはいつでも受け付ける（待機中でもゲーム中でも終了後でも）
   socket.on("reset", () => { resetGame(); });
 
   socket.on("disconnect", () => {
     const p = players.find((x) => x.id === socket.id);
     if (p) {
       p.isCPU = true;
-      p.name = p.name.replace("(CPU)", "") + "(CPU)";
+      if (!p.name.includes("(CPU)")) p.name = p.name + "(CPU)";
     }
     if (players.filter((x) => !x.isCPU).length === 0) {
       players = []; started = false; finished = false;

@@ -1,13 +1,14 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.7
+   バージョン: v1.8
    日付: 2026-06-12
-   v1.7での変更点:
-     - 1人がゴールするたびにファンファーレを鳴らす
-     - リセット時はブラウザを自動再読み込み（最初の名前入力に戻る）
-     - 電車コマは駅名標の下の専用スペースに置く（レイアウトずれ防止）
-   v1.6: リセット/ファンファーレ/電車コマ ほか
-   ※ server.js / index.html も v1.7 とセットで使うこと
+   v1.8での変更点:
+     - リセットボタンを常に表示（いつでも押せる）
+     - リセットはサーバーの新状態で名前入力に戻る方式に対応
+       （forceReload に依存しない）
+     - 駅名標/電車コマのクラス名を index.html v1.8 のCSSと完全一致
+   v1.7: 各自ゴールでファンファーレ、電車コマ ほか
+   ※ server.js / index.html も v1.8 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -24,9 +25,7 @@ let goal = 37;
 let stations = [];
 let currentRotation = 0;
 
-// どのプレイヤーのゴールまでファンファーレを鳴らしたか（index の集合）
 let fanfaredIndexes = {};
-
 let lastShownSeq = 0;
 let animating = false;
 let latestState = null;
@@ -42,7 +41,9 @@ const wheel = document.getElementById("wheel");
 const ctx = wheel.getContext("2d");
 const nameInput = document.getElementById("nameInput");
 const nameBtn = document.getElementById("nameBtn");
-const nameArea = document.getElementById("nameArea");
+
+// リセットボタンは最初から常に表示
+resetBtn.style.display = "";
 
 // ===== 音 =====
 let audioCtx = null;
@@ -220,7 +221,6 @@ function processNextMove() {
     statusEl.textContent = next.name + " が " + next.dice + " を出して「" + stKanji(next.to) + "」へ";
     animateSteps(next.index, next.from, next.to, () => {
       lastShownSeq = next.seq;
-      // このプレイヤーが小樽(ゴール)に着いたら、その都度ファンファーレ
       if (next.to >= goal && !fanfaredIndexes[next.index]) {
         fanfaredIndexes[next.index] = true;
         statusEl.textContent = next.name + " が小樽にゴール！";
@@ -252,14 +252,17 @@ socket.on("rejected", (msg) => {
   startBtn.disabled = true; rollBtn.disabled = true;
 });
 
-// リセットされたら、全ブラウザを再読み込みして最初からやり直す
-socket.on("forceReload", () => {
-  location.reload();
-});
-
 socket.on("state", (state) => {
   goal = state.goal;
   stations = state.stations || [];
+
+  // リセット等でゲームがまっさらに戻ったら、演出の進行状況も初期化
+  if (!state.started) {
+    lastShownSeq = 0;
+    animating = false;
+    fanfaredIndexes = {};
+  }
+
   latestState = state;
 
   if (!state.started || state.finished) {
@@ -275,7 +278,6 @@ function buildCell(i) {
   if (i === 0) cell.classList.add("start");
   if (i === goal) cell.classList.add("goal");
 
-  // 駅名標の部分（常に同じ並び：漢字→ひらがな→ローマ字帯）
   const sign = document.createElement("div");
   sign.className = "stSign";
 
@@ -299,7 +301,6 @@ function buildCell(i) {
 
   cell.appendChild(sign);
 
-  // 駅名標の下の「電車を置く専用スペース」（常にある）
   const pawns = document.createElement("div");
   pawns.className = "pawns";
   cell.appendChild(pawns);
@@ -398,7 +399,6 @@ function finalizeState(state) {
   if (state.finished && allMovesShown && !animating) {
     statusEl.textContent = "🏁 全員ゴール（小樽）！ゲーム終了";
     startBtn.disabled = true; rollBtn.disabled = true;
-    resetBtn.style.display = "";
     showResult(state);
     return;
   }
@@ -406,14 +406,11 @@ function finalizeState(state) {
   if (!state.started) {
     statusEl.textContent = "名前を決めて「ゲーム開始」を押してください";
     startBtn.disabled = false; rollBtn.disabled = true;
-    nameArea.style.display = "";
-    resetBtn.style.display = "none";
+    resultEl.classList.remove("show");
     return;
   }
 
   startBtn.disabled = true;
-  nameArea.style.display = "none";
-  resetBtn.style.display = "none";
   const current = state.players[state.currentTurn];
   const myTurn = current && current.id === myId;
   statusEl.textContent = myTurn
@@ -423,8 +420,9 @@ function finalizeState(state) {
 }
 
 function showResult(state) {
-  if (!state.finished) { resultEl.textContent = ""; return; }
+  if (!state.finished) { resultEl.classList.remove("show"); return; }
   const ranked = [...state.players].filter(p => p.rank > 0).sort((a, b) => a.rank - b.rank);
-  resultEl.textContent = "【結果】\n" +
-    ranked.map(p => `${p.rank}位：${p.name}`).join("\n");
+  resultEl.innerHTML = "<h2>🏁 結果</h2>" +
+    ranked.map(p => `${p.rank}位：${p.name}`).join("<br>");
+  resultEl.classList.add("show");
 }
