@@ -1,12 +1,15 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v1.5
+   バージョン: v1.6
    日付: 2026-06-12
    このファイル: ブラウザ側（画面表示・ルーレット演出・音）
-   v1.5での変更点:
-     - 各マスを駅名標ふう3段（漢字・ひらがな・ローマ字）で表示
-   v1.4: 漢字+ひらがな表示, v1.0〜v1.3: 演出方式・38駅化など
-   ※ server.js / index.html も v1.5 とセットで使うこと
+   v1.6での変更点:
+     - リセットボタン対応（reset送信 / resetDone受信）
+     - ゴール時のファンファーレを豪華に
+     - 全員ゴールの結果は「最後のコマが小樽に着いてから」表示
+     - コマを電車の形（進行方向＝右向き）で描く
+   v1.5: ローマ字, v1.4: 漢字+ひらがな ほか
+   ※ server.js / index.html も v1.6 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -20,7 +23,7 @@ const WHEEL_COLORS = [
 
 let myId = null;
 let goal = 37;
-let stations = [];         // {kanji, kana, romaji} の配列
+let stations = [];
 let currentRotation = 0;
 let lastWinnerShown = false;
 
@@ -34,6 +37,7 @@ const playersEl = document.getElementById("players");
 const resultEl = document.getElementById("result");
 const startBtn = document.getElementById("startBtn");
 const rollBtn = document.getElementById("rollBtn");
+const resetBtn = document.getElementById("resetBtn");
 const wheel = document.getElementById("wheel");
 const ctx = wheel.getContext("2d");
 const nameInput = document.getElementById("nameInput");
@@ -73,9 +77,25 @@ function stopSound() {
   setTimeout(() => beep(880, 160, "triangle", 0.3), 120);
 }
 function stepSound() { beep(1200, 60, "square", 0.2); }
-function winSound() {
-  const notes = [523, 659, 784, 1047];
-  notes.forEach((n, i) => setTimeout(() => beep(n, 200, "triangle", 0.3), i * 180));
+
+// ===== ファンファーレ（ゴール時・豪華版）=====
+function fanfare() {
+  ensureAudio();
+  // タッタッタッ ターン！という感じの音階
+  const seq = [
+    { f: 523, t: 0,   d: 140 },  // ド
+    { f: 523, t: 160, d: 140 },  // ド
+    { f: 523, t: 320, d: 140 },  // ド
+    { f: 659, t: 480, d: 260 },  // ミ（のばす）
+    { f: 784, t: 760, d: 260 },  // ソ
+    { f: 1047, t: 1040, d: 520 } // 高いド（フィナーレ）
+  ];
+  seq.forEach((n) => {
+    setTimeout(() => {
+      beep(n.f, n.d, "triangle", 0.32);
+      beep(n.f * 1.5, n.d, "square", 0.10); // 重ねて華やかに
+    }, n.t);
+  });
 }
 
 // ===== ルーレット描画 =====
@@ -160,7 +180,7 @@ function spinTo(dice, onStop) {
   }, 4000);
 }
 
-// ===== 駅名の取り出し（保険つき）=====
+// ===== 駅名の取り出し =====
 function stKanji(i) { const s = stations[i]; return s ? (s.kanji || String(i)) : String(i); }
 function stKana(i)  { const s = stations[i]; return s ? (s.kana || "") : ""; }
 function stRomaji(i){ const s = stations[i]; return s ? (s.romaji || "") : ""; }
@@ -215,11 +235,24 @@ nameBtn.addEventListener("click", () => {
 });
 startBtn.addEventListener("click", () => { ensureAudio(); socket.emit("start"); });
 rollBtn.addEventListener("click", () => { ensureAudio(); rollBtn.disabled = true; socket.emit("roll"); });
+resetBtn.addEventListener("click", () => {
+  if (confirm("ゲームをリセットして最初に戻しますか？")) {
+    socket.emit("reset");
+  }
+});
 
 socket.on("joined", (id) => { myId = id; });
 socket.on("rejected", (msg) => {
   statusEl.textContent = msg;
   startBtn.disabled = true; rollBtn.disabled = true;
+});
+
+// リセットされたら、こちらの演出記録も初期化する
+socket.on("resetDone", () => {
+  lastShownSeq = 0;
+  animating = false;
+  lastWinnerShown = false;
+  resultEl.textContent = "";
 });
 
 socket.on("state", (state) => {
@@ -233,26 +266,23 @@ socket.on("state", (state) => {
   processNextMove();
 });
 
-// ===== 盤面描画（駅名標ふう3段：漢字・ひらがな・ローマ字）=====
+// ===== 盤面描画（駅名標ふう3段 ＋ 電車コマ）=====
 function buildCell(i) {
   const cell = document.createElement("div");
   cell.className = "cell";
   if (i === 0) cell.classList.add("start");
   if (i === goal) cell.classList.add("goal");
 
-  // 漢字（一番上）
   const kanji = document.createElement("div");
   kanji.className = "stKanji";
   kanji.textContent = stKanji(i);
   cell.appendChild(kanji);
 
-  // ひらがな（その下）
   const kana = document.createElement("div");
   kana.className = "stKana";
   kana.textContent = stKana(i);
   cell.appendChild(kana);
 
-  // 黄緑の帯＋ローマ字
   const band = document.createElement("div");
   band.className = "stBand";
   const romaji = document.createElement("div");
@@ -261,7 +291,6 @@ function buildCell(i) {
   band.appendChild(romaji);
   cell.appendChild(band);
 
-  // START / GOAL の小ラベル
   if (i === 0 || i === goal) {
     const tag = document.createElement("div");
     tag.className = "stTag";
@@ -269,6 +298,32 @@ function buildCell(i) {
     cell.appendChild(tag);
   }
   return cell;
+}
+
+// 電車のコマ（HTMLで作る。色は車体の帯に使う。右向き＝進行方向）
+function makeTrain(colorIndex, name) {
+  const wrap = document.createElement("div");
+  wrap.className = "pawnWrap";
+
+  const train = document.createElement("div");
+  train.className = "train";
+  train.style.setProperty("--bodyColor", COLORS[colorIndex]);
+  // 電車の中身（窓と帯）
+  train.innerHTML =
+    '<div class="trainBody">' +
+      '<div class="trainBand"></div>' +
+      '<div class="trainWindows"><span></span><span></span><span></span></div>' +
+      '<div class="trainFace"></div>' +
+    '</div>' +
+    '<div class="trainWheels"><i></i><i></i></div>';
+
+  const nm = document.createElement("div");
+  nm.className = "pawnName";
+  nm.textContent = name;
+
+  wrap.appendChild(train);
+  wrap.appendChild(nm);
+  return wrap;
 }
 
 function placePawns(cells, positions) {
@@ -283,17 +338,7 @@ function placePawns(cells, positions) {
       pawnsEl.className = "pawns";
       cell.appendChild(pawnsEl);
     }
-    const wrap = document.createElement("div");
-    wrap.className = "pawnWrap";
-    const pawn = document.createElement("div");
-    pawn.className = "pawn";
-    pawn.style.background = COLORS[idx];
-    const nm = document.createElement("div");
-    nm.className = "pawnName";
-    nm.textContent = p.name;
-    wrap.appendChild(pawn);
-    wrap.appendChild(nm);
-    pawnsEl.appendChild(wrap);
+    pawnsEl.appendChild(makeTrain(idx, p.name));
   });
 }
 
@@ -340,21 +385,29 @@ function finalizeState(state) {
     })
     .join("　");
 
-  if (state.finished) {
+  // 全員ゴール、かつ演出（コマ移動）が全部終わっているときだけ結果を出す
+  const allMovesShown = !state.moves || state.moves.length === 0 ||
+    state.moves[state.moves.length - 1].seq === lastShownSeq;
+
+  if (state.finished && allMovesShown && !animating) {
     statusEl.textContent = "🏁 全員ゴール（小樽）！ゲーム終了";
     startBtn.disabled = true; rollBtn.disabled = true;
+    resetBtn.style.display = "";
     showResult(state);
     return;
   }
+
   if (!state.started) {
     statusEl.textContent = "名前を決めて「ゲーム開始」を押してください";
     startBtn.disabled = false; rollBtn.disabled = true;
     nameArea.style.display = "";
+    resetBtn.style.display = "none";
     return;
   }
 
   startBtn.disabled = true;
   nameArea.style.display = "none";
+  resetBtn.style.display = "none";
   const current = state.players[state.currentTurn];
   const myTurn = current && current.id === myId;
   statusEl.textContent = myTurn
@@ -368,5 +421,5 @@ function showResult(state) {
   const ranked = [...state.players].filter(p => p.rank > 0).sort((a, b) => a.rank - b.rank);
   resultEl.textContent = "【結果】\n" +
     ranked.map(p => `${p.rank}位：${p.name}`).join("\n");
-  if (!lastWinnerShown) { lastWinnerShown = true; ensureAudio(); winSound(); }
+  if (!lastWinnerShown) { lastWinnerShown = true; fanfare(); }
 }

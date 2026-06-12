@@ -1,12 +1,12 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v1.5
+   バージョン: v1.6
    日付: 2026-06-12
    このファイル: サーバー側（ゲームの進行・順番・位置の管理）
-   v1.5での変更点:
-     - 駅名に「ローマ字(romaji)」を追加（駅名標ふう表示のため）
-   v1.4: 漢字+ひらがな, v1.3: 38駅化, v1.0〜v1.2: 演出方式など
-   ※ client.js / index.html も v1.5 とセットで使うこと
+   v1.6での変更点:
+     - リセット機能を追加（reset イベントで最初の状態に戻す）
+   v1.5: ローマ字追加, v1.4: 漢字+ひらがな, v1.3: 38駅化 ほか
+   ※ client.js / index.html も v1.6 とセットで使うこと
    ========================================================= */
 
 const express = require("express");
@@ -22,7 +22,6 @@ app.use(express.static(path.join(__dirname, "public")));
 app.get("/health", (req, res) => res.send("ok"));
 
 // ===== 駅名リスト（栗山スタート → 小樽ゴール、全38駅）=====
-// kanji=漢字, kana=ひらがな, romaji=ローマ字
 const STATIONS = [
   { kanji: "栗山", kana: "くりやま", romaji: "Kuriyama" },
   { kanji: "由仁", kana: "ゆに", romaji: "Yuni" },
@@ -64,7 +63,7 @@ const STATIONS = [
   { kanji: "小樽", kana: "おたる", romaji: "Otaru" },
 ];
 
-const GOAL = STATIONS.length - 1; // = 37（小樽がゴール）
+const GOAL = STATIONS.length - 1; // = 37
 const MAX_PLAYERS = 5;
 
 let players = [];
@@ -73,7 +72,7 @@ let started = false;
 let finished = false;
 let finishedCount = 0;
 
-let moves = [];   // { seq, index, name, dice, from, to }
+let moves = [];
 let seqCounter = 0;
 
 function broadcastState() {
@@ -81,6 +80,19 @@ function broadcastState() {
     players, currentTurn, started, finished,
     goal: GOAL, stations: STATIONS, moves,
   });
+}
+
+// ===== 最初の状態に戻す（リセット）=====
+function resetGame() {
+  players = [];
+  currentTurn = 0;
+  started = false;
+  finished = false;
+  finishedCount = 0;
+  moves = [];
+  seqCounter = 0;
+  io.emit("resetDone"); // client に「リセットしたよ」と知らせる
+  broadcastState();
 }
 
 function startGame() {
@@ -124,12 +136,7 @@ function rollDice() {
   const to = player.pos;
 
   seqCounter += 1;
-  moves.push({
-    seq: seqCounter,
-    index: currentTurn,
-    name: player.name,
-    dice, from, to,
-  });
+  moves.push({ seq: seqCounter, index: currentTurn, name: player.name, dice, from, to });
   if (moves.length > 30) moves = moves.slice(-30);
 
   if (players.every((p) => p.rank > 0)) {
@@ -181,6 +188,9 @@ io.on("connection", (socket) => {
     if (!started || finished) return;
     if (players[currentTurn].id === socket.id) rollDice();
   });
+
+  // ===== リセット（誰でも押せる。ゲーム終了後に使う想定）=====
+  socket.on("reset", () => { resetGame(); });
 
   socket.on("disconnect", () => {
     const p = players.find((x) => x.id === socket.id);
