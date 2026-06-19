@@ -1,24 +1,22 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.4
-   日付: 2026-06-19（金）11:20 JST
-   v3.4での変更点:
-     - 栗山(pos=0)を「1つの共通スタートマス」に統合。
-       両ルート(岩見沢経由/追分経由)が同じ栗山セルから始まり、
-       栗山の直後から上下に分岐するようにした。
-       （栗山も白石以降の共通区間と同様、同じ列なら1セルだけ描画）
-     - 盤面をL字配置に変更（computeLayout を全面書き換え）。
-       栗山を右端・中段に置き、栗山の隣から
-         岩見沢ルート=上段を右→左へ横一直線
-         追分ルート =下段を右→左へ横一直線
-       とし、白石で上段の共通区間に合流して小樽(左端)へ。
-       縦スクロールも併用する前提のレイアウト。
-     - 駅数・ルート長・ゲームロジックは変更なし（server.js v3.1 のまま）。
-   v3.3: 共通区間の並び順バグ修正
-   v3.2: ルーレット画面固定・コマ追従
-   v3.1: 両ルート同時表示（外周ループ）・コマ進行方向で自動反転
-   v2.2: iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js v3.1 / index.html v3.2 とセットで使うこと
+   バージョン: v3.5
+   日付: 2026-06-19（金）14:26 JST
+   v3.5での変更点:
+     - 盤面を絶対座標キャンバス方式に全面変更。各駅に座標(x,y)を
+       割り当て、添付路線図に近い「斜めに流れる一本道」に配置。
+       栗山(右)を起点に、岩見沢方面は右上→左へ、追分方面は右下→左へ、
+       白石で合流して小樽(左上)へ。座標は STATION_LAYOUT で定義。
+     - 駅と駅の間を SVG の線(#rails)でつなぐ線路描画を追加（斜めもOK）。
+     - 栗山(pos=0)は両ルート共通の1マスとして1つだけ描画。
+       白石以降の共通区間も1マスだけ描画（従来踏襲）。
+     - 画面追従を変更：自分の番だけでなく、いま動いているプレイヤー
+       （ルーレットを回した人）のコマへ、全員の画面が追従する。
+     - コマ置きスペースは index.html 側で電車1台分の高さに固定。
+   v3.4: 栗山統合・L字配置（グリッド方式・本v3.5で置き換え）
+   v3.1: 両ルート同時表示・コマ進行方向で自動反転
+   v2.2: iPhone音復活・721系風電車・看板の見た目
+   ※ server.js v3.5 / index.html v3.5 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -32,6 +30,89 @@ const WHEEL_COLORS = [
 
 const ROUTE_NAMES = { oiwake: "追分経由", iwamizawa: "岩見沢経由" };
 
+// ===== 駅の配置座標（添付路線図に近い斜めの一本道）=====
+// グリッド的な「列(gx)・行(gy)」で大まかに置き、後でpx換算する。
+// gx:右ほど大きい / gy:下ほど大きい。座標はざっくり（雰囲気重視）。
+const CELL_DX = 96;  // 列間隔(px)
+const CELL_DY = 92;  // 行間隔(px)
+const MARGIN_X = 40;
+const MARGIN_Y = 40;
+
+// 岩見沢分岐(pos0..13): 栗山→栗丘→栗沢→志文→岩見沢→上幌向→幌向→豊幌→江別→高砂→野幌→大麻→森林公園→厚別
+// 栗山を右側(gx=18,gy=6)に置き、上へ→左へ流す
+const LAYOUT_IWAMIZAWA = [
+  { gx: 18, gy: 6 },  // 0 栗山（共通起点）
+  { gx: 18, gy: 5 },  // 1 栗丘
+  { gx: 18, gy: 4 },  // 2 栗沢
+  { gx: 18, gy: 3 },  // 3 志文
+  { gx: 18, gy: 2 },  // 4 岩見沢（ここで左へ）
+  { gx: 17, gy: 1 },  // 5 上幌向
+  { gx: 16, gy: 1 },  // 6 幌向
+  { gx: 15, gy: 2 },  // 7 豊幌
+  { gx: 14, gy: 2 },  // 8 江別
+  { gx: 13, gy: 2 },  // 9 高砂
+  { gx: 13, gy: 3 },  // 10 野幌
+  { gx: 13, gy: 4 },  // 11 大麻
+  { gx: 12, gy: 5 },  // 12 森林公園
+  { gx: 11, gy: 5 },  // 13 厚別（次が白石）
+];
+
+// 追分分岐(pos0..20): 栗山→由仁→古山→三川→追分→安平→早来→遠浅→沼ノ端→植苗→南千歳→千歳→長都→サッポロビール庭園→恵庭→恵み野→島松→北広島→上野幌→新札幌→平和
+// 栗山から下へ→左へ流す
+const LAYOUT_OIWAKE = [
+  { gx: 18, gy: 6 },  // 0 栗山（共通起点・iwamizawaと同じ座標）
+  { gx: 18, gy: 7 },  // 1 由仁
+  { gx: 18, gy: 8 },  // 2 古山
+  { gx: 18, gy: 9 },  // 3 三川
+  { gx: 18, gy: 10 }, // 4 追分（ここで左へ）
+  { gx: 17, gy: 11 }, // 5 安平
+  { gx: 16, gy: 11 }, // 6 早来
+  { gx: 15, gy: 12 }, // 7 遠浅
+  { gx: 14, gy: 13 }, // 8 沼ノ端
+  { gx: 13, gy: 13 }, // 9 植苗
+  { gx: 13, gy: 12 }, // 10 南千歳
+  { gx: 13, gy: 11 }, // 11 千歳
+  { gx: 13, gy: 10 }, // 12 長都
+  { gx: 13, gy: 9 },  // 13 サッポロビール庭園
+  { gx: 13, gy: 8 },  // 14 恵庭
+  { gx: 13, gy: 7 },  // 15 恵み野
+  { gx: 13, gy: 6 },  // 16 島松
+  { gx: 12, gy: 6 },  // 17 北広島
+  { gx: 11, gy: 6 },  // 18 上野幌
+  { gx: 11, gy: 5.5 },// 19 新札幌（厚別の少し下）
+  { gx: 11, gy: 5 },  // 20 平和（厚別と同じ列・次が白石）
+];
+
+// 共通区間(白石〜小樽): 白石→苗穂→札幌→桑園→琴似→発寒中央→発寒→稲積公園→手稲→稲穂→星置→ほしみ→銭函→朝里→小樽築港→南小樽→小樽
+// 厚別/平和の左隣(白石)から、左上へ斜めに上がって小樽へ
+const LAYOUT_COMMON = [
+  { gx: 10, gy: 4 },  // 0 白石（合流）
+  { gx: 9,  gy: 4 },  // 1 苗穂
+  { gx: 8,  gy: 4 },  // 2 札幌
+  { gx: 8,  gy: 3 },  // 3 桑園
+  { gx: 7,  gy: 3 },  // 4 琴似
+  { gx: 6,  gy: 4 },  // 5 発寒中央
+  { gx: 6,  gy: 3 },  // 6 発寒
+  { gx: 5,  gy: 3 },  // 7 稲積公園
+  { gx: 4,  gy: 2 },  // 8 手稲
+  { gx: 3,  gy: 2 },  // 9 稲穂
+  { gx: 3,  gy: 1 },  // 10 星置
+  { gx: 2,  gy: 1 },  // 11 ほしみ
+  { gx: 1,  gy: 1 },  // 12 銭函
+  { gx: 1,  gy: 0.5 },// 13 朝里（少し上）
+  { gx: 1,  gy: 0 },  // 14 小樽築港
+  { gx: 0,  gy: -0.5 },// 15 南小樽
+  { gx: 0,  gy: -1.5 },// 16 小樽（ゴール）
+];
+
+function gridToPx(g) {
+  // gx,gy を画面座標へ。gx は右ほど大、画面では右に行くほど left 大。
+  return {
+    left: MARGIN_X + g.gx * CELL_DX,
+    top:  MARGIN_Y + (g.gy + 2) * CELL_DY, // gyに+2して上の余白を確保
+  };
+}
+
 let myId = null;
 let routes = { oiwake: [], iwamizawa: [] };
 let goals = { oiwake: 0, iwamizawa: 0 };
@@ -44,6 +125,7 @@ let animating = false;
 let latestState = null;
 
 const boardEl = document.getElementById("board");
+const railsEl = document.getElementById("rails");
 const statusEl = document.getElementById("status");
 const playersEl = document.getElementById("players");
 const resultEl = document.getElementById("result");
@@ -58,6 +140,7 @@ const routeOiwakeBtn = document.getElementById("routeOiwakeBtn");
 const routeIwamizawaBtn = document.getElementById("routeIwamizawaBtn");
 const routeLabel = document.getElementById("routeLabel");
 const routeArea = document.getElementById("routeArea");
+const boardScrollEl = document.querySelector(".boardScroll");
 
 // ===== 音（iOS Safari対策：壊れたら作り直す）=====
 let audioCtx = null;
@@ -169,81 +252,31 @@ function stationOf(routeKey, i) {
   return arr[i] || { kanji: String(i), kana: "", romaji: "" };
 }
 
-// =========================================================
-//  L字配置のレイアウト座標を計算（v3.4）
-//  - 栗山(pos=0)は両ルート共通の1マス。右端・中段に置く。
-//  - 岩見沢ルート: 栗山の隣(左)から上段を右→左へ横一直線
-//  - 追分ルート  : 栗山の隣(左)から下段を右→左へ横一直線
-//  - 共通区間(白石〜小樽)は上段に合流して左へ続く
-//
-//  行(row)の割り当て:
-//    UP_ROW   = 上段（岩見沢の分岐＋共通区間）
-//    MID_ROW  = 中段（栗山だけ）
-//    DOWN_ROW = 下段（追分の分岐）
-//
-//  列(col)は右ほど大きい数。栗山を一番右に置き、左へ進むほど小さくする。
-// =========================================================
-const UP_ROW = 1;   // 岩見沢ルート＋共通区間
-const MID_ROW = 2;  // 栗山（分岐点）
-const DOWN_ROW = 3; // 追分ルート
-
-function computeLayout() {
-  const result = { oiwake: [], iwamizawa: [] };
-
-  const csI = commonStart.iwamizawa; // 岩見沢の分岐駅数（栗山〜厚別＝14）
-  const csO = commonStart.oiwake;    // 追分の分岐駅数（栗山〜平和＝21）
-  const commonLen = routes.iwamizawa.length - csI; // 共通区間の駅数（白石〜小樽）
-
-  // 栗山(pos=0)を除いた分岐の駅数（栗山の隣から数える）
-  const branchI = csI - 1; // 岩見沢: 栗丘〜厚別
-  const branchO = csO - 1; // 追分  : 由仁〜平和
-
-  // 上段の駅数 = 岩見沢分岐(栗山除く) + 共通区間
-  // 下段の駅数 = 追分分岐(栗山除く)
-  // 栗山は両段の右隣にある1列を占有する。
-  // 上段が左へどこまで伸びるか / 下段が左へどこまで伸びるかで全幅が決まる。
-  const upLen = branchI + commonLen;   // 上段に並ぶ駅数
-  const downLen = branchO;             // 下段に並ぶ駅数
-  const widest = Math.max(upLen, downLen);
-
-  // 栗山の列（一番右）。左へ行くほど col が小さくなるよう、十分大きい値を起点にする。
-  const KURIYAMA_COL = widest + 2;
-
-  // --- 栗山（pos=0）: 両ルート共通、中段の右端 ---
-  // 進行方向は左向き(L)
-  result.iwamizawa.push({ pos: 0, row: MID_ROW, col: KURIYAMA_COL, dir: "L", kuriyama: true });
-  result.oiwake.push({ pos: 0, row: MID_ROW, col: KURIYAMA_COL, dir: "L", kuriyama: true });
-
-  // --- 岩見沢ルート: 栗山の左隣(上段)から栗丘→…→厚別、続けて白石→…→小樽 ---
-  // 上段の右端列 = 栗山の1つ左
-  const upRightCol = KURIYAMA_COL - 1;
-  for (let k = 0; k < upLen; k++) {
-    // pos は 1(栗丘) から。upLen 個ぶん連続して上段へ。
-    const pos = k + 1;
-    const col = upRightCol - k; // 右→左
-    const isCommon = pos >= csI; // 白石以降は共通区間
-    result.iwamizawa.push({ pos, row: UP_ROW, col, dir: "L", common: isCommon });
+// ===== レイアウト：各ルートの pos -> 座標 =====
+function layoutFor(routeKey) {
+  const csI = commonStart.iwamizawa;
+  const csO = commonStart.oiwake;
+  const branch = routeKey === "iwamizawa" ? LAYOUT_IWAMIZAWA : LAYOUT_OIWAKE;
+  const cs = routeKey === "iwamizawa" ? csI : csO;
+  const arr = [];
+  // 分岐部分
+  for (let pos = 0; pos < cs; pos++) {
+    arr.push({ pos, g: branch[pos] });
   }
-
-  // --- 追分ルート: 栗山の左隣(下段)から由仁→…→平和 ---
-  const downRightCol = KURIYAMA_COL - 1;
-  for (let k = 0; k < branchO; k++) {
-    const pos = k + 1; // 1(由仁)〜branchO(平和)
-    const col = downRightCol - k; // 右→左
-    result.oiwake.push({ pos, row: DOWN_ROW, col, dir: "L" });
+  // 共通区間
+  for (let j = 0; j < LAYOUT_COMMON.length; j++) {
+    arr.push({ pos: cs + j, g: LAYOUT_COMMON[j], common: true });
   }
+  return arr;
+}
 
-  // --- 追分ルートの共通区間(白石〜小樽): 上段の岩見沢と同じ列に重ねる ---
-  // 岩見沢側で白石が置かれた列に合わせ、追分の共通区間も同じ上段セルへマッピングする。
-  // 岩見沢の白石は pos=csI、列は upRightCol-(csI-1)。
-  const shiroishiCol = upRightCol - (csI - 1);
-  for (let j = 0; j < commonLen; j++) {
-    const posO = csO + j; // 追分での共通区間の pos（白石〜小樽）
-    const col = shiroishiCol - j; // 右→左（岩見沢と完全に同じ列）
-    result.oiwake.push({ pos: posO, row: UP_ROW, col, dir: "L", common: true });
-  }
-
-  return result;
+// 進行方向（左へ進むか右へ進むか）で電車の向きを決める
+function dirOf(routeKey, pos) {
+  const lay = layoutFor(routeKey);
+  const cur = lay.find((x) => x.pos === pos);
+  const prev = lay.find((x) => x.pos === pos - 1);
+  if (!cur || !prev) return "L";
+  return (cur.g.gx <= prev.g.gx) ? "L" : "R";
 }
 
 // 現在の各プレイヤー位置（lastShownSeqまで反映）
@@ -256,7 +289,6 @@ function positionsUpToShown() {
 }
 
 // ===== 盤面描画 =====
-let layout = null;
 let cellMap = {};
 
 function buildSign(routeKey, pos) {
@@ -279,8 +311,9 @@ function buildSign(routeKey, pos) {
 function makeCell(routeKey, item) {
   const cell = document.createElement("div");
   cell.className = "cell";
-  cell.style.gridRow = String(item.row);
-  cell.style.gridColumn = String(item.col);
+  const px = gridToPx(item.g);
+  cell.style.left = px.left + "px";
+  cell.style.top = px.top + "px";
   const st = stationOf(routeKey, item.pos);
   if (item.pos === 0) cell.classList.add("start");
   const goal = goals[routeKey];
@@ -326,33 +359,81 @@ function makeTrain(colorIndex, name, dir) {
   return wrap;
 }
 
-function renderBoard(positions, override) {
-  boardEl.innerHTML = "";
-  cellMap = {};
-  layout = computeLayout();
+// 盤面全体のサイズを座標から算出して #board に設定
+function sizeBoard() {
+  let maxL = 0, maxT = 0;
+  const all = [
+    ...LAYOUT_IWAMIZAWA, ...LAYOUT_OIWAKE, ...LAYOUT_COMMON,
+  ];
+  all.forEach((g) => {
+    const px = gridToPx(g);
+    if (px.left > maxL) maxL = px.left;
+    if (px.top > maxT) maxT = px.top;
+  });
+  const w = maxL + 84 + MARGIN_X;
+  const h = maxT + 120 + MARGIN_Y;
+  boardEl.style.width = w + "px";
+  boardEl.style.height = h + "px";
+  railsEl.setAttribute("width", w);
+  railsEl.setAttribute("height", h);
+  railsEl.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  return { w, h };
+}
 
-  // 同じ列に置かれる共通セル（栗山＝中段の1列、白石以降＝上段の各列）は
-  // 1回だけ描画し、両ルートの cellMap から同じ要素を指すようにする。
-  const drawnByRC = {}; // "row,col" -> cell
+// セル中心の座標（線路を結ぶ用）
+function cellCenter(g) {
+  const px = gridToPx(g);
+  return { x: px.left + 42, y: px.top + 50 };
+}
+
+// 線路を SVG で描画（各ルートの隣り合う駅を線で結ぶ。斜めもOK）
+function drawRails() {
+  while (railsEl.firstChild) railsEl.removeChild(railsEl.firstChild);
+  const drawnSeg = {}; // 重複線（共通区間）を防ぐ
 
   ["iwamizawa", "oiwake"].forEach((rk) => {
-    layout[rk].forEach((item) => {
-      const isShared = item.kuriyama || item.common;
-      if (isShared) {
-        const key = item.row + "," + item.col;
-        if (drawnByRC[key]) {
-          cellMap[rk + ":" + item.pos] = drawnByRC[key];
-          return;
-        }
-        const cell = makeCell(rk, item);
-        boardEl.appendChild(cell);
-        drawnByRC[key] = cell;
-        cellMap[rk + ":" + item.pos] = cell;
-      } else {
-        const cell = makeCell(rk, item);
-        boardEl.appendChild(cell);
-        cellMap[rk + ":" + item.pos] = cell;
+    const lay = layoutFor(rk);
+    for (let i = 0; i < lay.length - 1; i++) {
+      const a = cellCenter(lay[i].g);
+      const b = cellCenter(lay[i + 1].g);
+      const key = [Math.round(a.x), Math.round(a.y), Math.round(b.x), Math.round(b.y)].join(",");
+      if (drawnSeg[key]) continue;
+      drawnSeg[key] = true;
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+      line.setAttribute("stroke", "#9aa6b2");
+      line.setAttribute("stroke-width", "6");
+      line.setAttribute("stroke-linecap", "round");
+      railsEl.appendChild(line);
+    }
+  });
+}
+
+function renderBoard(positions, override) {
+  // 既存の駅セルを削除（railsは残す）
+  Array.from(boardEl.querySelectorAll(".cell")).forEach((el) => el.remove());
+  cellMap = {};
+
+  sizeBoard();
+  drawRails();
+
+  const drawnByXY = {}; // "left,top" -> cell（栗山・共通区間の重複描画防止）
+
+  ["iwamizawa", "oiwake"].forEach((rk) => {
+    const lay = layoutFor(rk);
+    lay.forEach((item) => {
+      const isShared = item.pos === 0 || item.common;
+      const px = gridToPx(item.g);
+      const xykey = px.left + "," + px.top;
+      if (isShared && drawnByXY[xykey]) {
+        cellMap[rk + ":" + item.pos] = drawnByXY[xykey];
+        return;
       }
+      const cell = makeCell(rk, item);
+      boardEl.appendChild(cell);
+      if (isShared) drawnByXY[xykey] = cell;
+      cellMap[rk + ":" + item.pos] = cell;
     });
   });
 
@@ -360,8 +441,7 @@ function renderBoard(positions, override) {
     let pos = positions[idx];
     if (override && override.idx === idx) pos = override.pos;
     const rk = p.routeKey || "oiwake";
-    const item = layout[rk].find((it) => it.pos === pos);
-    const dir = item ? item.dir : "L";
+    const dir = dirOf(rk, pos);
     const cell = cellMap[rk + ":" + pos];
     if (!cell) return;
     const pawnsEl = cell.querySelector(".pawns");
@@ -369,21 +449,23 @@ function renderBoard(positions, override) {
   });
 }
 
-function scrollToMyPawn(pos, rk) {
+// 指定プレイヤーのコマへ画面を寄せる（全員の画面で動いている人を追う）
+function scrollToPawn(playerIndex, pos) {
+  const rk = latestState.players[playerIndex].routeKey || "oiwake";
   const cell = cellMap[rk + ":" + pos];
-  if (cell) cell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  if (cell && cell.scrollIntoView) {
+    cell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  }
 }
 
 function animateSteps(playerIndex, from, to, onDone) {
   let current = from;
-  const me = latestState.players.findIndex((p) => p.id === myId);
-  const rk = latestState.players[playerIndex].routeKey || "oiwake";
   const stepOnce = () => {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
     renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
     stepSound();
-    if (playerIndex === me) scrollToMyPawn(current, rk);
+    scrollToPawn(playerIndex, current); // 動いている人を全員が追う
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
     setTimeout(stepOnce, 350);
   };
@@ -402,6 +484,7 @@ function processNextMove() {
   const rk = latestState.players[next.index].routeKey || "oiwake";
   statusEl.textContent = next.name + " がルーレットを回しています...";
   renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
+  scrollToPawn(next.index, next.from); // 回す前にその人へ寄せる
 
   spinTo(next.dice, () => {
     const st = stationOf(rk, next.to);
@@ -502,10 +585,10 @@ function finalizeState(state) {
     : (current ? current.name + " の番です..." : "");
   rollBtn.disabled = !myTurn || animating;
 
-  const meIdx = state.players.findIndex((p) => p.id === myId);
-  if (meIdx >= 0) {
-    const rk = state.players[meIdx].routeKey || "oiwake";
-    scrollToMyPawn(state.players[meIdx].pos, rk);
+  // 待機中も、現在の手番のプレイヤーへ画面を寄せる（全員）
+  if (current) {
+    const idx = state.players.findIndex((p) => p.id === current.id);
+    if (idx >= 0) scrollToPawn(idx, state.players[idx].pos);
   }
 }
 

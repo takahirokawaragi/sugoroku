@@ -1,42 +1,63 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.2
-     日付: 2026-06-12
+     バージョン: v3.5
+     日付: 2026-06-19（金）14:26 JST
      変更点:
-       1) ルーレット＋操作パネルを画面左上に固定(position:fixed)
-          → 盤面を縦横にスクロールしても常に見える
-       2) 自分の番のとき自分のコマへ盤面が自動追従（client.js側）
-       3) 盤面は「上=岩見沢／下=追分で左へ分岐→白石で合流」のシンプル版
-       4) 駅看板の見た目は v2.2 を維持（緑帯・黒漢字・水色窓）
-     ※ server.js v3.1 / client.js v3.1 とセットで使用（PC前提）
+       1) 盤面を CSSグリッド→絶対座標キャンバスに変更
+          （#board を position:relative、各駅は left/top で配置）
+       2) 駅と駅の間を線路でつなぐ SVG レイヤー(#rails)を追加
+       3) 駅看板下のコマ置きスペースを標準で電車1台分の高さに固定
+       4) ルーレット＋操作パネルは従来どおり左上に固定
+          （盤面と重なってよい＝盤面側の左余白は取らない）
+     ※ server.js v3.5 / client.js v3.5 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>みんなですごろく 〜栗山から小樽〜</title>
   <style>
-    * { box-sizing: border-box; }
+    * {
+      box-sizing: border-box;
+    }
+
     body {
       margin: 0;
       font-family: "Hiragino Kaku Gothic ProN", "メイリオ", sans-serif;
       background: #eef3f8;
       color: #222;
-      padding: 0 12px 24px;
     }
-    h1 { font-size: 18px; text-align: center; margin: 10px 0; color: #1b3a5b; }
 
     button {
-      padding: 8px 14px; font-size: 14px; border: none; border-radius: 6px;
-      cursor: pointer; background: #2d6cb6; color: #fff;
+      padding: 8px 14px;
+      font-size: 14px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: #2d6cb6;
+      color: #fff;
     }
-    button:hover { background: #245a99; }
-    button:disabled { background: #9bb4cc; cursor: default; }
-    #resetBtn { background: #c0562b; }
-    #resetBtn:hover { background: #a3471f; }
 
-    /* ===== ルーレット＋操作：画面左上に固定 ===== */
+    button:hover {
+      background: #245a99;
+    }
+
+    button:disabled {
+      background: #9bb4cc;
+      cursor: default;
+    }
+
+    #resetBtn {
+      background: #c0562b;
+    }
+
+    #resetBtn:hover {
+      background: #a3471f;
+    }
+
+    /* ===== ルーレット＋操作：画面左上に固定（盤面と重なってOK）===== */
     .fixedPanel {
       position: fixed;
       top: 10px;
@@ -44,121 +65,406 @@
       width: 320px;
       max-height: calc(100vh - 20px);
       overflow-y: auto;
-      background: rgba(255,255,255,0.97);
+      background: rgba(255, 255, 255, 0.97);
       border: 2px solid #c9d6e4;
       border-radius: 14px;
       padding: 10px 14px 12px;
-      box-shadow: 0 4px 14px rgba(0,0,0,.18);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
       text-align: center;
       z-index: 100;
     }
-    .nameArea { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: center; margin-bottom: 6px; }
-    #nameInput { flex: 1 1 140px; padding: 7px 10px; font-size: 15px; border: 1px solid #bbb; border-radius: 6px; }
 
-    #routeArea { margin-bottom: 6px; }
-    #routeLabel { font-size: 13px; font-weight: bold; color: #1b3a5b; margin-bottom: 4px; }
-    .routeBtn { background: #fff; color: #1f8b5c; border: 2px solid #1f8b5c; margin: 0 3px; padding: 6px 10px; }
-    .routeBtn:hover { background: #eafaf0; }
-    .routeBtn.selected { background: #1f8b5c; color: #fff; }
-
-    #rouletteWrap { position: relative; width: 160px; height: 174px; margin: 6px auto 2px; }
-    #pointer {
-      position: absolute; top: 0; left: 50%; transform: translateX(-50%);
-      width: 0; height: 0; border-left: 10px solid transparent; border-right: 10px solid transparent;
-      border-top: 16px solid #111; z-index: 5;
+    .nameArea {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin-bottom: 6px;
     }
+
+    #nameInput {
+      flex: 1 1 140px;
+      padding: 7px 10px;
+      font-size: 15px;
+      border: 1px solid #bbb;
+      border-radius: 6px;
+    }
+
+    #routeArea {
+      margin-bottom: 6px;
+    }
+
+    #routeLabel {
+      font-size: 13px;
+      font-weight: bold;
+      color: #1b3a5b;
+      margin-bottom: 4px;
+    }
+
+    .routeBtn {
+      background: #fff;
+      color: #1f8b5c;
+      border: 2px solid #1f8b5c;
+      margin: 0 3px;
+      padding: 6px 10px;
+    }
+
+    .routeBtn:hover {
+      background: #eafaf0;
+    }
+
+    .routeBtn.selected {
+      background: #1f8b5c;
+      color: #fff;
+    }
+
+    #rouletteWrap {
+      position: relative;
+      width: 160px;
+      height: 174px;
+      margin: 6px auto 2px;
+    }
+
+    #pointer {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 10px solid transparent;
+      border-right: 10px solid transparent;
+      border-top: 16px solid #111;
+      z-index: 5;
+    }
+
     #wheel {
-      display: block; width: 160px; height: 160px; margin: 12px auto 0;
+      display: block;
+      width: 160px;
+      height: 160px;
+      margin: 12px auto 0;
       transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
     }
-    #status { font-size: 14px; font-weight: bold; margin: 4px 0; color: #1b3a5b; }
-    #players { font-size: 12px; line-height: 1.6; }
-    .btnRow { margin-top: 6px; }
-    .btnRow button { margin: 2px; }
 
-    /* ===== ループ盤面 ===== */
-    .boardScroll { width: 100%; overflow-x: auto; padding: 8px 0; }
+    #status {
+      font-size: 14px;
+      font-weight: bold;
+      margin: 4px 0;
+      color: #1b3a5b;
+    }
+
+    #players {
+      font-size: 12px;
+      line-height: 1.6;
+    }
+
+    .btnRow {
+      margin-top: 6px;
+    }
+
+    .btnRow button {
+      margin: 2px;
+    }
+
+    /* ===== タイトル（盤面スクロール領域の上に小さく）===== */
+    h1 {
+      font-size: 16px;
+      text-align: center;
+      margin: 8px 0;
+      color: #1b3a5b;
+    }
+
+    /* ===== 絶対座標キャンバス盤面 ===== */
+    .boardScroll {
+      width: 100%;
+      height: calc(100vh - 40px);
+      overflow: auto;
+      /* 縦横スクロール */
+      padding: 0;
+    }
+
     #board {
       position: relative;
-      display: grid;
-      grid-auto-columns: 150px;
-      grid-auto-rows: minmax(118px, auto);
-      gap: 8px;
-      width: max-content;
-      margin: 0 auto;
-      /* 左上の固定パネルと重ならないよう、盤面に左の余白を確保 */
-      padding-left: 340px;
-      min-height: 70vh;
+      /* 駅セルの絶対配置の基準 */
+      /* 幅・高さは client.js が駅座標から算出して設定する */
     }
 
-    /* ===== 駅セル（v2.2の見た目）===== */
+    /* 線路レイヤー（最背面） */
+    #rails {
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* ===== 駅セル（絶対配置・v2.2の見た目を踏襲）===== */
     .cell {
-      background: #f7f7f7; border: 1px solid #cfcfcf; border-radius: 6px;
-      padding: 6px 5px 5px; display: flex; flex-direction: column;
-      align-items: stretch; position: relative;
+      position: absolute;
+      /* left/top で配置 */
+      width: 84px;
+      background: #f7f7f7;
+      border: 1px solid #cfcfcf;
+      border-radius: 6px;
+      padding: 6px 5px 5px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      z-index: 2;
+      /* 線路より前面 */
     }
-    .cell.start { background: #fff1ea; }
-    .cell.goal  { background: #fff8e2; }
+
+    .cell.start {
+      background: #fff1ea;
+    }
+
+    .cell.goal {
+      background: #fff8e2;
+    }
+
     .stTag {
-      position: absolute; top: -8px; right: 6px; font-size: 10px; font-weight: bold;
-      color: #fff; background: #c0562b; padding: 1px 6px; border-radius: 8px;
+      position: absolute;
+      top: -8px;
+      right: 6px;
+      font-size: 10px;
+      font-weight: bold;
+      color: #fff;
+      background: #c0562b;
+      padding: 1px 6px;
+      border-radius: 8px;
     }
-    .cell.goal .stTag { background: #d4a017; }
+
+    .cell.goal .stTag {
+      background: #d4a017;
+    }
 
     .stSign {
-      background: #fff; border: 2px solid #2a6db0; border-radius: 5px;
-      padding: 5px 4px 0; display: flex; flex-direction: column;
-      align-items: center; justify-content: flex-start; height: 62px; overflow: hidden;
+      background: #fff;
+      border: 2px solid #2a6db0;
+      border-radius: 5px;
+      padding: 5px 4px 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 62px;
+      overflow: hidden;
     }
-    .stKanji { font-size: 16px; font-weight: bold; color: #111; text-align: center; line-height: 1.15; word-break: break-all; }
-    .stKana { font-size: 11px; color: #444; text-align: center; line-height: 1.25; margin-top: 2px; word-break: break-all; }
-    .stBand { width: 100%; background: #8cc63f; border-radius: 3px; margin-top: auto; padding: 2px 2px 3px; }
-    .stRomaji { font-size: 10px; letter-spacing: .3px; color: #fff; text-align: center; line-height: 1.2; word-break: break-all; }
-    .cell.longName .stKanji { font-size: 11px; line-height: 1.1; white-space: nowrap; }
-    .cell.longName .stKana  { font-size: 8.5px; line-height: 1.1; white-space: nowrap; }
-    .cell.longName .stRomaji{ font-size: 8px; white-space: nowrap; }
 
-    .pawns {
-      min-height: 40px; margin-top: 5px; display: flex; flex-direction: row;
-      flex-wrap: wrap; gap: 4px; justify-content: center; align-items: flex-start;
+    .stKanji {
+      font-size: 16px;
+      font-weight: bold;
+      color: #111;
+      text-align: center;
+      line-height: 1.15;
+      word-break: break-all;
     }
-    .pawnWrap { display: flex; flex-direction: column; align-items: center; width: 56px; }
+
+    .stKana {
+      font-size: 11px;
+      color: #444;
+      text-align: center;
+      line-height: 1.25;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+
+    .stBand {
+      width: 100%;
+      background: #8cc63f;
+      border-radius: 3px;
+      margin-top: auto;
+      padding: 2px 2px 3px;
+    }
+
+    .stRomaji {
+      font-size: 10px;
+      letter-spacing: .3px;
+      color: #fff;
+      text-align: center;
+      line-height: 1.2;
+      word-break: break-all;
+    }
+
+    .cell.longName .stKanji {
+      font-size: 11px;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .cell.longName .stKana {
+      font-size: 8.5px;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .cell.longName .stRomaji {
+      font-size: 8px;
+      white-space: nowrap;
+    }
+
+    /* コマ置きスペース：標準で電車1台分の高さに固定 */
+    .pawns {
+      height: 34px;
+      /* 電車1台分（trainの高さ26px＋余白）*/
+      margin-top: 5px;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: center;
+      align-items: flex-start;
+      overflow: visible;
+    }
+
+    .pawnWrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 56px;
+    }
+
     .pawnName {
-      font-size: 9px; color: #333; text-align: center; line-height: 1.1; margin-top: 1px;
-      max-width: 56px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+      font-size: 9px;
+      color: #333;
+      text-align: center;
+      line-height: 1.1;
+      margin-top: 1px;
+      max-width: 56px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
     }
 
     /* 電車コマ 721系風 / .flipで左向き */
-    .train { position: relative; width: 54px; height: 26px; }
-    .train.flip { transform: scaleX(-1); }
-    .train .trainBody {
-      position: relative; width: 54px; height: 18px;
-      background: linear-gradient(#fbfcfd, #d7dce0 60%, #c2c8cd);
-      border: 1px solid #8a9097; border-radius: 3px 5px 3px 3px; overflow: hidden;
+    .train {
+      position: relative;
+      width: 54px;
+      height: 26px;
     }
-    .train .trainRoof { position: absolute; top: 0; left: 0; right: 0; height: 3px; background: #9aa1a8; }
-    .train .trainWindows { position: absolute; top: 4px; left: 3px; right: 3px; display: flex; gap: 1.5px; align-items: center; }
-    .train .trainWindows span { flex: 1; height: 7px; background: #cfe9ff; border: 1px solid #a9cae6; border-radius: 1px; }
-    .train .trainWindows .door { flex: 0 0 4px; height: 9px; background: #b9c3cc; border: 1px solid #97a2ab; border-radius: 1px; }
-    .train .trainWindows .cab { flex: 0 0 6px; height: 7px; background: #bfe0ff; border: 1px solid #9cc0e0; border-radius: 1px 3px 1px 1px; }
-    .train .trainBand { position: absolute; left: 0; right: 0; bottom: 2px; height: 3px; background: var(--bandColor, #2ecc71); }
-    .train .trainSkirt { width: 50px; height: 3px; margin: 0 auto; background: #6f767c; border-radius: 0 0 2px 2px; }
-    .train .trainWheels { position: absolute; bottom: 0; left: 6px; right: 6px; display: flex; justify-content: space-between; }
-    .train .trainWheels i { display: block; width: 5px; height: 5px; background: #333; border-radius: 50%; border: 1px solid #666; }
+
+    .train.flip {
+      transform: scaleX(-1);
+    }
+
+    .train .trainBody {
+      position: relative;
+      width: 54px;
+      height: 18px;
+      background: linear-gradient(#fbfcfd, #d7dce0 60%, #c2c8cd);
+      border: 1px solid #8a9097;
+      border-radius: 3px 5px 3px 3px;
+      overflow: hidden;
+    }
+
+    .train .trainRoof {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: #9aa1a8;
+    }
+
+    .train .trainWindows {
+      position: absolute;
+      top: 4px;
+      left: 3px;
+      right: 3px;
+      display: flex;
+      gap: 1.5px;
+      align-items: center;
+    }
+
+    .train .trainWindows span {
+      flex: 1;
+      height: 7px;
+      background: #cfe9ff;
+      border: 1px solid #a9cae6;
+      border-radius: 1px;
+    }
+
+    .train .trainWindows .door {
+      flex: 0 0 4px;
+      height: 9px;
+      background: #b9c3cc;
+      border: 1px solid #97a2ab;
+      border-radius: 1px;
+    }
+
+    .train .trainWindows .cab {
+      flex: 0 0 6px;
+      height: 7px;
+      background: #bfe0ff;
+      border: 1px solid #9cc0e0;
+      border-radius: 1px 3px 1px 1px;
+    }
+
+    .train .trainBand {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 2px;
+      height: 3px;
+      background: var(--bandColor, #2ecc71);
+    }
+
+    .train .trainSkirt {
+      width: 50px;
+      height: 3px;
+      margin: 0 auto;
+      background: #6f767c;
+      border-radius: 0 0 2px 2px;
+    }
+
+    .train .trainWheels {
+      position: absolute;
+      bottom: 0;
+      left: 6px;
+      right: 6px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .train .trainWheels i {
+      display: block;
+      width: 5px;
+      height: 5px;
+      background: #333;
+      border-radius: 50%;
+      border: 1px solid #666;
+    }
 
     /* 結果 */
     #result {
-      max-width: 920px; margin: 14px auto; background: #fff; border-radius: 10px;
-      padding: 12px; font-size: 15px; line-height: 1.9;
-      box-shadow: 0 2px 6px rgba(0,0,0,.08); display: none;
+      position: fixed;
+      right: 14px;
+      top: 14px;
+      width: 260px;
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 15px;
+      line-height: 1.9;
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .18);
+      display: none;
+      z-index: 90;
     }
-    #result.show { display: block; }
-    #result h2 { margin: 0 0 8px; font-size: 18px; color: #1b3a5b; }
+
+    #result.show {
+      display: block;
+    }
+
+    #result h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: #1b3a5b;
+    }
   </style>
 </head>
-<body>
-  <h1>みんなですごろく 〜栗山から小樽〜</h1>
 
+<body>
   <!-- 画面左上に固定するパネル -->
   <div class="fixedPanel">
     <div class="nameArea" id="nameArea">
@@ -189,7 +495,8 @@
 
   <div class="boardScroll">
     <div id="board">
-      <!-- 駅セルは client.js が gridRow/gridColumn 指定で配置 -->
+      <svg id="rails"></svg>
+      <!-- 駅セルは client.js が left/top 指定で配置 -->
     </div>
   </div>
 
@@ -198,4 +505,5 @@
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js"></script>
 </body>
+
 </html>

@@ -1,14 +1,13 @@
 /* =========================================================
    すごろくゲーム  server.js
-   バージョン: v3.1
-   日付: 2026-06-12
-   v3.1での変更点:
-     - 両ルートを常に全員へ配信（追分経由 / 岩見沢経由を同時表示）
-     - プレイヤーごとに別ルートを選択可（各自が自分のルートを進む）
-     - 白石で合流（白石・苗穂・札幌〜小樽を共通区間として一本化）
-     - 各プレイヤーは自分のルートの全長(分岐＋共通)を進み小樽でゴール
-   v3.0: ルート選択（単一共有方式）→ v3.1で各自選択方式に変更
-   ※ client.js / index.html も v3.1 とセットで使うこと
+   バージョン: v3.5
+   日付: 2026-06-19（金）14:26 JST
+   v3.5での変更点:
+     - 岩見沢ルートの駅順を修正：江別→高砂→野幌→大麻
+       （v3.1までは 江別→野幌→高砂→大麻 と誤っていた）
+     - ゲームロジック・通信仕様は v3.1 から変更なし。
+     - client.js v3.5 / index.html v3.5 とセットで使用。
+   v3.1: 両ルート同時配信・各自ルート選択・白石で合流
    ========================================================= */
 
 const express = require("express");
@@ -35,8 +34,8 @@ const BRANCH_IWAMIZAWA = [
   { kanji: "幌向", kana: "ほろむい", romaji: "Horomui" },
   { kanji: "豊幌", kana: "とよほろ", romaji: "Toyohoro" },
   { kanji: "江別", kana: "えべつ", romaji: "Ebetsu" },
-  { kanji: "野幌", kana: "のっぽろ", romaji: "Nopporo" },
   { kanji: "高砂", kana: "たかさご", romaji: "Takasago" },
+  { kanji: "野幌", kana: "のっぽろ", romaji: "Nopporo" },
   { kanji: "大麻", kana: "おおあさ", romaji: "Ōasa" },
   { kanji: "森林公園", kana: "しんりんこうえん", romaji: "Shinrin-Kōen" },
   { kanji: "厚別", kana: "あつべつ", romaji: "Atsubetsu" },
@@ -141,7 +140,6 @@ function startGame() {
   if (players.filter((p) => !p.isCPU).length === 0) return;
   while (players.length < MAX_PLAYERS) {
     const i = players.length;
-    // CPUのルートはランダムに割り当て
     const rk = Math.random() < 0.5 ? "oiwake" : "iwamizawa";
     players.push({ id: "cpu-" + i, name: "CPU" + (i + 1), pos: 0, isCPU: true, rank: 0, routeKey: rk });
   }
@@ -225,7 +223,6 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ルート選択（開始前のみ・自分のルートだけ変更）
   socket.on("setRoute", (key) => {
     if (started) return;
     if (key !== "oiwake" && key !== "iwamizawa") return;
