@@ -1,11 +1,20 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.3
-   日付: 2026-06-12
-   v3.3での変更点:
-     - 共通区間(白石→苗穂→札幌→…→小樽)の並び順バグを修正
-       （苗穂が消える／白石と札幌が入れ替わる問題を解消）
-     - computeLayout の列計算を見直し、駅の重なりをなくした
+   バージョン: v3.4
+   日付: 2026-06-19（金）11:20 JST
+   v3.4での変更点:
+     - 栗山(pos=0)を「1つの共通スタートマス」に統合。
+       両ルート(岩見沢経由/追分経由)が同じ栗山セルから始まり、
+       栗山の直後から上下に分岐するようにした。
+       （栗山も白石以降の共通区間と同様、同じ列なら1セルだけ描画）
+     - 盤面をL字配置に変更（computeLayout を全面書き換え）。
+       栗山を右端・中段に置き、栗山の隣から
+         岩見沢ルート=上段を右→左へ横一直線
+         追分ルート =下段を右→左へ横一直線
+       とし、白石で上段の共通区間に合流して小樽(左端)へ。
+       縦スクロールも併用する前提のレイアウト。
+     - 駅数・ルート長・ゲームロジックは変更なし（server.js v3.1 のまま）。
+   v3.3: 共通区間の並び順バグ修正
    v3.2: ルーレット画面固定・コマ追従
    v3.1: 両ルート同時表示（外周ループ）・コマ進行方向で自動反転
    v2.2: iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
@@ -161,43 +170,79 @@ function stationOf(routeKey, i) {
 }
 
 // =========================================================
-//  外周ループのレイアウト座標を計算
-//  - 上行(UP_ROW): 岩見沢ルートの分岐を右→左
-//  - 下行(DOWN_ROW): 追分ルートの分岐を右→左
-//  - 最上段(TOP_ROW): 共通区間を 白石(右)→小樽(左) で並べる
+//  L字配置のレイアウト座標を計算（v3.4）
+//  - 栗山(pos=0)は両ルート共通の1マス。右端・中段に置く。
+//  - 岩見沢ルート: 栗山の隣(左)から上段を右→左へ横一直線
+//  - 追分ルート  : 栗山の隣(左)から下段を右→左へ横一直線
+//  - 共通区間(白石〜小樽)は上段に合流して左へ続く
+//
+//  行(row)の割り当て:
+//    UP_ROW   = 上段（岩見沢の分岐＋共通区間）
+//    MID_ROW  = 中段（栗山だけ）
+//    DOWN_ROW = 下段（追分の分岐）
+//
+//  列(col)は右ほど大きい数。栗山を一番右に置き、左へ進むほど小さくする。
 // =========================================================
-const TOP_ROW = 1;
-const UP_ROW = 3;
-const MID_ROW = 5;
-const DOWN_ROW = 7;
+const UP_ROW = 1;   // 岩見沢ルート＋共通区間
+const MID_ROW = 2;  // 栗山（分岐点）
+const DOWN_ROW = 3; // 追分ルート
 
 function computeLayout() {
   const result = { oiwake: [], iwamizawa: [] };
-  const csI = commonStart.iwamizawa; // 岩見沢の分岐駅数（栗山〜厚別）
-  const csO = commonStart.oiwake;    // 追分の分岐駅数（栗山〜平和）
-  const branchMax = Math.max(csI, csO); // 長いほうの分岐に合わせる
+
+  const csI = commonStart.iwamizawa; // 岩見沢の分岐駅数（栗山〜厚別＝14）
+  const csO = commonStart.oiwake;    // 追分の分岐駅数（栗山〜平和＝21）
   const commonLen = routes.iwamizawa.length - csI; // 共通区間の駅数（白石〜小樽）
 
-  // 全体がプラス座標に収まるよう右端列を十分大きく取る
-  const RIGHT_COL = branchMax + commonLen + 1;
+  // 栗山(pos=0)を除いた分岐の駅数（栗山の隣から数える）
+  const branchI = csI - 1; // 岩見沢: 栗丘〜厚別
+  const branchO = csO - 1; // 追分  : 由仁〜平和
 
-  // --- 分岐：岩見沢（上行）栗山(右)→厚別(左) ---
-  for (let i = 0; i < csI; i++) {
-    result.iwamizawa.push({ pos: i, row: UP_ROW, col: RIGHT_COL - i, dir: "L" });
-  }
-  // --- 分岐：追分（下行）栗山(右)→平和(左) ---
-  for (let i = 0; i < csO; i++) {
-    result.oiwake.push({ pos: i, row: DOWN_ROW, col: RIGHT_COL - i, dir: "L" });
+  // 上段の駅数 = 岩見沢分岐(栗山除く) + 共通区間
+  // 下段の駅数 = 追分分岐(栗山除く)
+  // 栗山は両段の右隣にある1列を占有する。
+  // 上段が左へどこまで伸びるか / 下段が左へどこまで伸びるかで全幅が決まる。
+  const upLen = branchI + commonLen;   // 上段に並ぶ駅数
+  const downLen = branchO;             // 下段に並ぶ駅数
+  const widest = Math.max(upLen, downLen);
+
+  // 栗山の列（一番右）。左へ行くほど col が小さくなるよう、十分大きい値を起点にする。
+  const KURIYAMA_COL = widest + 2;
+
+  // --- 栗山（pos=0）: 両ルート共通、中段の右端 ---
+  // 進行方向は左向き(L)
+  result.iwamizawa.push({ pos: 0, row: MID_ROW, col: KURIYAMA_COL, dir: "L", kuriyama: true });
+  result.oiwake.push({ pos: 0, row: MID_ROW, col: KURIYAMA_COL, dir: "L", kuriyama: true });
+
+  // --- 岩見沢ルート: 栗山の左隣(上段)から栗丘→…→厚別、続けて白石→…→小樽 ---
+  // 上段の右端列 = 栗山の1つ左
+  const upRightCol = KURIYAMA_COL - 1;
+  for (let k = 0; k < upLen; k++) {
+    // pos は 1(栗丘) から。upLen 個ぶん連続して上段へ。
+    const pos = k + 1;
+    const col = upRightCol - k; // 右→左
+    const isCommon = pos >= csI; // 白石以降は共通区間
+    result.iwamizawa.push({ pos, row: UP_ROW, col, dir: "L", common: isCommon });
   }
 
-  // --- 共通区間（最上段）白石(右)→小樽(左) ---
-  // 白石の列 = 分岐左端のさらに1つ左
-  const whiteishiCol = RIGHT_COL - branchMax - 1;
+  // --- 追分ルート: 栗山の左隣(下段)から由仁→…→平和 ---
+  const downRightCol = KURIYAMA_COL - 1;
+  for (let k = 0; k < branchO; k++) {
+    const pos = k + 1; // 1(由仁)〜branchO(平和)
+    const col = downRightCol - k; // 右→左
+    result.oiwake.push({ pos, row: DOWN_ROW, col, dir: "L" });
+  }
+
+  // --- 追分ルートの共通区間(白石〜小樽): 上段の岩見沢と同じ列に重ねる ---
+  // 岩見沢側で白石が置かれた列に合わせ、追分の共通区間も同じ上段セルへマッピングする。
+  // 岩見沢の白石は pos=csI、列は upRightCol-(csI-1)。
+  const shiroishiCol = upRightCol - (csI - 1);
   for (let j = 0; j < commonLen; j++) {
-    const col = whiteishiCol - j; // j=0:白石(右) … 末尾:小樽(左)
-    result.iwamizawa.push({ pos: csI + j, row: TOP_ROW, col: col, dir: "L", common: true });
-    result.oiwake.push({ pos: csO + j, row: TOP_ROW, col: col, dir: "L", common: true });
+    const posO = csO + j; // 追分での共通区間の pos（白石〜小樽）
+    const col = shiroishiCol - j; // 右→左（岩見沢と完全に同じ列）
+    result.oiwake.push({ pos: posO, row: UP_ROW, col, dir: "L", common: true });
   }
+
   return result;
 }
 
@@ -286,18 +331,22 @@ function renderBoard(positions, override) {
   cellMap = {};
   layout = computeLayout();
 
-  const drawnCommon = {};
+  // 同じ列に置かれる共通セル（栗山＝中段の1列、白石以降＝上段の各列）は
+  // 1回だけ描画し、両ルートの cellMap から同じ要素を指すようにする。
+  const drawnByRC = {}; // "row,col" -> cell
+
   ["iwamizawa", "oiwake"].forEach((rk) => {
     layout[rk].forEach((item) => {
-      if (item.common) {
-        const key = "C:" + item.col;
-        if (drawnCommon[key]) {
-          cellMap[rk + ":" + item.pos] = drawnCommon[key];
+      const isShared = item.kuriyama || item.common;
+      if (isShared) {
+        const key = item.row + "," + item.col;
+        if (drawnByRC[key]) {
+          cellMap[rk + ":" + item.pos] = drawnByRC[key];
           return;
         }
         const cell = makeCell(rk, item);
         boardEl.appendChild(cell);
-        drawnCommon[key] = cell;
+        drawnByRC[key] = cell;
         cellMap[rk + ":" + item.pos] = cell;
       } else {
         const cell = makeCell(rk, item);
