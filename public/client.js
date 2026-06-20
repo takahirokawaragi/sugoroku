@@ -1,12 +1,12 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.4.1
-   日付: 2026-06-20（土）22:14 JST
-   v3.4.1での変更点:
-     - 「ルーレットを回す」ボタンを HTML から削除したことに対応
-       rollBtn 要素への依存を全廃し、回せる条件を canRoll 変数で管理
-       （ルーレット本体クリックで回す仕様は v3.4.0 を維持）
+   バージョン: v3.4.2
+   日付: 2026-06-20（土）22:24 JST
+   v3.4.2での変更点:
+     - 数字をカラー帯の上下中央に揃えた（帯幅は変更なし）
+       配置半径を outerR-outerR*0.22 → (outerR+innerR)/2 に変更
    --- 以下 過去履歴 ---
+   v3.4.1: 回すボタンをHTMLから削除・rollBtn依存を廃止（canRoll化）
    v3.4.0: 帯を70%幅・数字を中心寄せ・10同サイズ・本体クリックで回転
    v3.3.5: 数字を外周寄せ・帯を細く
    v3.3.4: カラー帯を太く・数字を大型化
@@ -132,7 +132,7 @@ function fanfare() {
   seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
 }
 
-// ===== ルーレット描画（v3.4.0：帯を70%幅に・数字を少し中心へ・10も同サイズ）=====
+// ===== ルーレット描画（v3.4.2：数字を帯の上下中央に揃える）=====
 // 中心から外へ：小さな真円 → 大きな真円 → 十角形リング
 //   → 放射状の目盛り線(10) → カラフル10分割(数字) → 外枠
 function drawWheel() {
@@ -149,8 +149,8 @@ function drawWheel() {
   const outerR = r - 6;                  // カラー帯の外端
   const prevInnerR = r * 0.50;           // v3.3.5 のカラー帯内端
   const prevBandW = outerR - prevInnerR; // v3.3.5 のカラー帯幅
-  const bandW = prevBandW * 0.70;        // ★帯幅を70%に細く
-  const innerR = outerR - bandW;         // 細くした分、内端は外へ寄る
+  const bandW = prevBandW * 0.70;        // 帯幅は70%のまま（変更なし）
+  const innerR = outerR - bandW;         // 帯の内端
   const lineGray = "#9aa1a8";
 
   // --- 外周：カラフルな10分割セグメント（数字つき）---
@@ -163,7 +163,7 @@ function drawWheel() {
     ctx.closePath();
     ctx.fillStyle = WHEEL_COLORS[i]; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
-    // 数字（全て同じサイズ。少し中心側に戻して帯内に収める）
+    // 数字（帯の上下中央に配置。全て同じサイズ）
     const label = String(i + 1);
     ctx.save();
     ctx.translate(r, r);
@@ -171,7 +171,7 @@ function drawWheel() {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(r * 0.30) + "px sans-serif";
     ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    const textR = outerR - outerR * 0.22; // ★少し中心側へ
+    const textR = (outerR + innerR) / 2; // ★帯の上下中央
     ctx.rotate(Math.PI / 2);
     ctx.strokeText(label, 0, -textR);
     ctx.fillText(label, 0, -textR);
