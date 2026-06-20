@@ -1,34 +1,31 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.7.1
-   日付: 2026-06-21（日）06:26 JST
-   v3.7.1での変更点:
-     - 左メニューを「元のすごろく式」に差し戻し（A案）：
+   バージョン: v3.7.2
+   日付: 2026-06-21（日）06:37 JST
+   v3.7.2での変更点:
+     - 【重要】index.html v3.7.0 の現物DOM構造に正しく合わせた。
+       (.boardScroll / #rouletteWrap / #wheel / #seats / #pointer)
+       看板・コマのCSSは index.html v3.7.0 の現物をそのまま使用。
+     - 左メニューを元のすごろく式(A案)に：
        ・P1〜P5バッジは常時グレーアウトの飾り（席ロックなし）。
-       ・5つの名前入力欄はどこでも入力可（自席ロックを廃止）。
-       ・各行に岩見沢/追分ボタンを残し、名前を入れて押すと確定。
-     - 追分ボタンの横に着順「1位〜5位」を表示（.seatRank）。
-       サーバーの p.rank を使用。未ゴールは空欄。
-     - 統一プレイヤーカラーを七並べと完全一致に変更：
-       P1 #e53935 / P2 #1e88e5 / P3 #43a047 /
-       P4 #fb8c00 / P5 #8e24aa（全ゲーム共通）。
-     - タイトル「オンライン鉄道すごろく」を七並べと同一デザインに
-       （ヒラギノ角ゴW9＋レインボーグラデ＋縁取り）。CSSは index.html 側。
-     - 音をビープ合成から mp3/wav 再生へ切替（public/sounds/）。
-       手番=yourTurn / ボタン=button / ルーレット=roll / ゴール=goal。
-       ファイル未配置・再生失敗時は無音で続行。
-     - 盤面 MARGIN を 1100→1800 へ拡大。小樽（左上端）到達時も
-       コマが画面の上下左右中央へ来るよう余白を確保。
-     - ルーレット右上フロート・直径50vh、盤面・コマ・座標は v3.6.6 を維持。
+       ・5つの名前欄はどこでも入力可。
+       ・各行の岩見沢/追分ボタンで、その席の名前＋ルートを確定。
+     - 追分ボタンの横に着順「1位〜5位」を表示（p.rank・未ゴールは空欄）。
+     - 統一プレイヤーカラーを七並べと一致：
+       #e53935 / #1e88e5 / #43a047 / #fb8c00 / #8e24aa。
+     - 音をビープ合成から mp3 再生へ（public/sounds/）。
+       yourTurn=手番 / button=ボタン / roll=ルーレット / goal=ゴール。
+       未配置・失敗時は無音で続行。
+     - 盤面 MARGIN を 1100→1800 へ拡大（小樽中央追従）。
+     - ルーレット右上フロート・直径50vh、描画/回転は無変更。
      - server.js は変更不要。
    --- 以下 過去履歴 ---
-   v3.7.0: 左メニューを七並べ式5席に刷新・ルーレット右上分離・タイトルバナー固定
+   v3.7.0: 左メニュー七並べ式5席・ルーレット右上分離・タイトルバナー固定
    v3.6.6: 沼ノ端を最下段へ・合流末尾を白石下側に配置し平和付近の重なり解消
-   v3.6.5: 追分経由の北上区間を縦一直線化
    v3.6.3: 駅座標を白石中心の三差路で全面再設計
    v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
    v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
-   ※ server.js v3.5 / index.html v3.7.1 とセットで使うこと
+   ※ server.js v3.5 / index.html v3.7.2 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -54,7 +51,6 @@ let fanfaredIndexes = {};
 let lastShownSeq = 0;
 let animating = false;
 let latestState = null;
-
 let canRoll = false;
 
 // 5席ぶんの下書き名前（席ロックなし＝どこでも入力可）
@@ -73,16 +69,14 @@ const ctx = wheel.getContext("2d");
 
 // =========================================================
 //  駅座標テーブル（白石中心の三差路・広域図準拠）
-//  pos は server.js の配列インデックスと一致
 // =========================================================
-// v3.7.1: 小樽（左上端）到達時もコマを画面中央へ置けるよう余白拡大
+// v3.7.2: 小樽（左上端）到達時もコマを画面中央へ置けるよう余白拡大
 const MARGIN = 1800;
 
-// 白石の RAW 基準座標
 const SHI_X = 3400;
 const SHI_Y = 1400;
 
-// --- 共通区間（白石〜小樽: 左上がり一直線・駅間ゆったり）---
+// --- 共通区間（白石〜小樽: 左上がり一直線）---
 const COMMON_COUNT = 17;
 const COMMON_STEP_X = 250;
 const COMMON_STEP_Y = 60;
@@ -91,10 +85,10 @@ const RAW_COMMON = (function () {
   for (let i = 0; i < COMMON_COUNT; i++) {
     arr.push({ x: SHI_X - COMMON_STEP_X * i, y: SHI_Y - COMMON_STEP_Y * i });
   }
-  return arr; // [0]=白石 ... [16]=小樽
+  return arr;
 })();
 
-// --- 岩見沢経由 分岐（pos 0〜13: 栗山〜厚別）---
+// --- 岩見沢経由 分岐（pos 0〜13）---
 const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山
   { x: SHI_X + 1850, y: SHI_Y - 430 },  // 1 栗丘
@@ -112,9 +106,9 @@ const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 180,  y: SHI_Y - 260 },  // 13 厚別
 ];
 
-// --- 追分経由 分岐（pos 0〜20: 栗山〜平和）---
+// --- 追分経由 分岐（pos 0〜20）---
 const RAW_OIWAKE_BRANCH = [
-  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（岩見沢経由と同地点）
+  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山
   { x: SHI_X + 1980, y: SHI_Y - 80 },   // 1 由仁
   { x: SHI_X + 2060, y: SHI_Y + 100 },  // 2 古山
   { x: SHI_X + 2090, y: SHI_Y + 320 },  // 3 三川
@@ -137,7 +131,6 @@ const RAW_OIWAKE_BRANCH = [
   { x: SHI_X + 240,  y: SHI_Y + 360 },  // 20 平和
 ];
 
-// 全 RAW 座標を正の領域へ収め、MARGIN を加える
 const ALL_RAW = RAW_IWAMIZAWA_BRANCH.concat(RAW_OIWAKE_BRANCH, RAW_COMMON);
 const MIN_X = Math.min.apply(null, ALL_RAW.map((c) => c.x));
 const MIN_Y = Math.min.apply(null, ALL_RAW.map((c) => c.y));
@@ -168,8 +161,7 @@ function coordOf(routeKey, pos) {
   return COORD_OIWAKE_BRANCH[pos] || COORD_OIWAKE_BRANCH[0];
 }
 
-// ===== ルーレットを右上フロート・直径=縦幅50%（描画/動きは無変更）=====
-// canvas 内部解像度は 360px のまま。表示サイズだけ 50vh にスケール。
+// ===== ルーレット右上フロート・直径=縦幅50%（描画/動きは無変更）=====
 (function setupWheel() {
   if (!wheel) return;
   wheel.width = 360;
@@ -180,13 +172,12 @@ function coordOf(routeKey, pos) {
 
 function applyWheelSize() {
   if (!wheel) return;
-  const d = Math.round(window.innerHeight * 0.5); // 直径＝縦幅の1/2
+  const d = Math.round(window.innerHeight * 0.5);
   wheel.style.width = d + "px";
   wheel.style.height = d + "px";
   const wrap = document.getElementById("rouletteWrap");
   if (wrap) {
     wrap.style.width = d + "px";
-    // ポインタ(三角)の高さぶん少し足す
     wrap.style.height = (d + 18) + "px";
   }
 }
@@ -194,11 +185,6 @@ window.addEventListener("resize", applyWheelSize);
 
 // =========================================================
 //  音（mp3/wav 再生・public/sounds/）
-//  ファイル未配置や再生失敗時は無音で続行。
-//  - yourTurn : 自分の手番が回ってきた時
-//  - button   : 各ボタン押下
-//  - roll     : ルーレット回転中
-//  - goal     : ゴール
 // =========================================================
 const SOUND_FILES = {
   yourTurn: "/sounds/yourTurn.mp3",
@@ -220,7 +206,6 @@ function preloadSounds() {
 }
 preloadSounds();
 
-// 初回のユーザー操作で音を解放（iOS/モバイル対策）
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
@@ -256,7 +241,7 @@ function stopSoundFx(key) {
   try { a.pause(); a.currentTime = 0; } catch (e) {}
 }
 
-// ===== ルーレット描画（数字を帯の上下中央に揃える・変更なし）=====
+// ===== ルーレット描画（変更なし）=====
 function drawWheel() {
   const size = wheel.width;
   const r = size / 2;
@@ -350,7 +335,7 @@ function spinTo(dice, onStop) {
   setTimeout(() => { stopSoundFx("roll"); if (onStop) setTimeout(onStop, 400); }, 4000);
 }
 
-// ===== 駅情報の取得（ルート別）=====
+// ===== 駅情報 =====
 function stationOf(routeKey, i) {
   const arr = routes[routeKey] || [];
   return arr[i] || { kanji: String(i), kana: "", romaji: "" };
@@ -364,9 +349,7 @@ function positionsUpToShown() {
   return pos;
 }
 
-// =========================================================
-//  背景路線図 SVG を生成（自作・著作権フリー）
-// =========================================================
+// ===== 背景路線図 SVG =====
 function lineThrough(coords, color, width) {
   const pts = coords.map((c) => `${c.x},${c.y}`).join(" ");
   return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" />`;
@@ -409,7 +392,7 @@ function buildRouteSVG() {
   return svg;
 }
 
-// ===== 721系コマ（元画像寄り・横帯でプレイヤー識別）=====
+// ===== 721系コマ（index.html v3.7.0 のDOM構造と一致）=====
 function makeTrain(colorIndex, name, dir) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -443,7 +426,6 @@ function makeTrain(colorIndex, name, dir) {
     '<div class="trainWheels">' +
       '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
       '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
-      '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
     '</div>';
   const nm = document.createElement("div");
   nm.className = "pawnName"; nm.textContent = name;
@@ -451,7 +433,7 @@ function makeTrain(colorIndex, name, dir) {
   return wrap;
 }
 
-// ===== 盤面描画（座標方式）=====
+// ===== 盤面描画 =====
 let cellMap = {};
 let coordCellDrawn = {};
 
@@ -486,13 +468,13 @@ function makeCell(routeKey, pos) {
   if (isGoal) cell.classList.add("goal");
   if (st.kanji.length >= 6) cell.classList.add("longName");
 
-  cell.appendChild(buildSign(routeKey, pos));
-
   if (pos === 0) {
     const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "START"; cell.appendChild(tag);
   } else if (isGoal) {
     const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "GOAL"; cell.appendChild(tag);
   }
+
+  cell.appendChild(buildSign(routeKey, pos));
 
   const pawns = document.createElement("div");
   pawns.className = "pawns";
@@ -545,7 +527,7 @@ function renderBoard(positions, override) {
   });
 }
 
-// ===== 指定駅(rk,pos)を盤面ビューポート中央へ（背景が動く）=====
+// ===== 中央追従 =====
 function centerOnCell(pos, rk, smooth) {
   const cell = cellMap[rk + ":" + pos];
   if (!cell || !boardScrollEl) return;
@@ -614,7 +596,7 @@ function processNextMove() {
   });
 }
 
-// ===== ルーレットを回す（本体クリック）=====
+// ===== ルーレットを回す =====
 function tryRoll() {
   if (!canRoll) return;
   unlockAudio();
@@ -624,18 +606,14 @@ function tryRoll() {
 wheel.addEventListener("click", tryRoll);
 
 // =========================================================
-//  5席メニュー（元のすごろく式・A案）
-//   ・P1〜P5バッジは常時グレーアウトの飾り（席ロックなし）。
-//   ・5つの名前欄はどこでも入力可。
-//   ・各行の岩見沢/追分ボタンで、その席の名前＋ルートを確定。
-//   ・追分ボタンの横に着順「1位〜5位」を表示（p.rank）。
+//  5席メニュー（元すごろく式・A案）
 // =========================================================
 function renderSeats(state) {
   if (!seatsEl) return;
   seatsEl.innerHTML = "";
 
   for (let i = 0; i < MAX_SEATS; i++) {
-    const p = state.players[i]; // 居なければ undefined（空席）
+    const p = state.players[i];
     const isOccupied = !!p;
     const isCurrent = state.started && !state.finished && state.currentTurn === i && isOccupied;
 
@@ -647,7 +625,7 @@ function renderSeats(state) {
       row.style.borderColor = COLORS[i];
     }
 
-    // カラーバッジ（常時グレーアウトの飾り＝ボタンだが押せない）
+    // P1〜P5バッジ：常時グレーアウトの飾り
     const badge = document.createElement("button");
     badge.className = "seatBadge";
     badge.style.background = COLORS[i];
@@ -655,7 +633,7 @@ function renderSeats(state) {
     badge.disabled = true;
     row.appendChild(badge);
 
-    // 名前入力欄（席ロックなし：どこでも入力可）
+    // 名前欄：席ロックなし＝どこでも入力可
     const input = document.createElement("input");
     input.className = "seatName";
     input.type = "text";
@@ -664,11 +642,10 @@ function renderSeats(state) {
     if (isOccupied) {
       const confirmed = p.name && !/^Player\d+$/.test(p.name);
       input.value = confirmed ? p.name : (draftNames[i] || "");
-      input.disabled = state.started; // 開始後は固定
     } else {
       input.value = draftNames[i] || "";
-      input.disabled = state.started;
     }
+    input.disabled = state.started;
     input.addEventListener("input", (e) => { draftNames[i] = e.target.value; });
     row.appendChild(input);
 
@@ -681,7 +658,6 @@ function renderSeats(state) {
     oiwBtn.className = "seatRouteBtn oiw";
     oiwBtn.textContent = "追分";
 
-    // 選択状態（確定済みのルートをハイライト）
     if (isOccupied) {
       const rk = p.routeKey || "oiwake";
       if (rk === "iwamizawa") iwaBtn.classList.add("selected");
@@ -702,18 +678,14 @@ function renderSeats(state) {
     const rank = document.createElement("span");
     rank.className = "seatRank";
     rank.dataset.seat = String(i);
-    if (isOccupied && p.rank && p.rank > 0) {
-      rank.textContent = p.rank + "位";
-    } else {
-      rank.textContent = "";
-    }
+    rank.textContent = (isOccupied && p.rank && p.rank > 0) ? (p.rank + "位") : "";
     row.appendChild(rank);
 
     seatsEl.appendChild(row);
   }
 }
 
-// 名前を確定→ルートを確定（その席のルートボタンで両方送る）
+// 名前＋ルートを確定
 function confirmSeat(seatIndex, routeKey, input) {
   unlockAudio();
   playSound("button");
@@ -748,7 +720,6 @@ socket.on("resetReady", () => {
   setTimeout(() => socket.connect(), 300);
 });
 
-// 自分の手番が回ってきた瞬間に1回だけ鳴らすための記録
 let lastMyTurn = false;
 
 socket.on("state", (state) => {
@@ -800,7 +771,6 @@ function finalizeState(state) {
   if (statusEl) statusEl.textContent = "";
   canRoll = !!myTurn && !animating;
 
-  // 自分の手番が新たに回ってきた時だけ yourTurn を鳴らす
   if (myTurn && !lastMyTurn && !animating) {
     playSound("yourTurn");
   }

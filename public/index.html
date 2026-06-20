@@ -1,63 +1,83 @@
-<!--
-  ファイル: public/index.html
-  プロジェクト: すごろくゲーム
-  バージョン: v3.7.1
-  日付: 2026-06-21（日）06:26 JST
-  v3.7.1での変更点:
-    - タイトル「オンライン鉄道すごろく」を七並べ(games/7 v2.6)と同一デザインに統一
-      （ヒラギノ角ゴ StdN W9 ／ 明るいレインボーグラデーション ／
-        -webkit-text-stroke: 0.9px #0d2c40 ／ 二重 text-shadow）。
-    - 左メニュー(#seats)を元のすごろく式に：
-      ・P1〜P5バッジ(.seatBadge)は常時グレーアウトの飾り。
-      ・名前欄(.seatName)はどこでも入力可。
-      ・各行に岩見沢/追分ボタン(.seatRouteBtn)を配置。
-      ・追分ボタン横に着順表示 .seatRank（#c77800・右寄せ）。
-    - 統一プレイヤーカラー：P1 #e53935 / P2 #1e88e5 / P3 #43a047 /
-      P4 #fb8c00 / P5 #8e24aa。
-    - ルーレット(#rouletteWrap/#wheel)は右上フロート・直径50vh（JS制御）。
-    - 盤面 MARGIN は client.js 側で 1800 に拡大（小樽中央追従）。
-  --- 過去履歴 ---
-    v3.7.0: 左メニュー七並べ式・ルーレット右上分離・タイトルバナー固定
-    v3.6.x: 白石中心三差路レイアウト
-  ※ server.js v3.5 / client.js v3.7.1 とセットで使用（PC前提）
--->
+<!-- ============================================================
+     ファイル: public/index.html
+     バージョン: v3.7.2
+     日付: 2026-06-21（日）06:37 JST
+     v3.7.2での変更点:
+       - 【重要】駅看板(.stSign 系)と721系コマ(.train 系)のCSSを
+         v3.7.0 の現物どおりに復元（v3.7.1で誤って書き換えた分を修正）。
+       - タイトルを七並べ(games/7 v2.6)と同一デザインに統一
+         （ヒラギノ角ゴ StdN W9 ／ レインボーグラデ ／
+           -webkit-text-stroke: 0.9px #0d2c40 ／ 二重 text-shadow）。
+       - 左メニューを元のすごろく式(A案)に：
+         ・P1〜P5バッジ(.seatBadge)は常時グレーアウトの飾り。
+         ・名前欄(.seatName)はどこでも入力可。
+         ・各行に岩見沢/追分ボタン、追分ボタン横に着順 .seatRank。
+       - 統一プレイヤーカラーを七並べと一致：
+         P1 #e53935 / P2 #1e88e5 / P3 #43a047 / P4 #fb8c00 / P5 #8e24aa。
+       - 盤面 MARGIN は client.js v3.7.2 側で 1800（小樽中央追従）。
+         #board の固定値は仮。JS実行後に BOARD_W/BOARD_H で上書き。
+     --- 以下 過去履歴 ---
+     v3.7.0: 左メニュー七並べ式・ルーレット右上分離・タイトルバナー固定
+     v3.6.6: 沼ノ端を最下段へ・合流末尾を白石下側に配置し重なり解消
+     v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
+     ※ server.js v3.5 / client.js v3.7.2 とセットで使用（PC前提）
+     ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
 
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>オンライン鉄道すごろく</title>
-  <link rel="icon" href="data:,">
   <style>
     * {
       box-sizing: border-box;
     }
 
-    html,
-    body {
-      height: 100%;
-    }
-
     body {
       margin: 0;
-      font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
-      background: #e3f2fd;
-      color: #0d2c40;
-      overflow: hidden;
+      font-family: "Hiragino Kaku Gothic ProN", "メイリオ", sans-serif;
+      background: #eef3f8;
+      color: #222;
+      padding: 0;
     }
 
-    /* ===== 上中央タイトルバナー（七並べと同一デザイン）===== */
-    #title {
+    button {
+      padding: 8px 14px;
+      font-size: 14px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: #2d6cb6;
+      color: #fff;
+    }
+
+    button:hover {
+      background: #245a99;
+    }
+
+    button:disabled {
+      background: #9bb4cc;
+      cursor: default;
+    }
+
+    /* ===== 上中央 タイトルバナー（七並べと同一デザイン）===== */
+    .titleBanner {
       position: fixed;
-      top: 6px;
+      top: 8px;
       left: 50%;
       transform: translateX(-50%);
-      z-index: 100;
-      text-align: center;
+      z-index: 200;
+      pointer-events: none;
+    }
+
+    .titleBanner .ttl {
+      margin: 0;
       font-size: clamp(20px, 3.2vw, 38px);
       font-weight: 900;
       letter-spacing: 2px;
+      text-align: center;
+      white-space: nowrap;
       font-family: "Hiragino Kaku Gothic StdN W9", "Hiragino Kaku Gothic StdN",
         "Hiragino Sans W9", "Hiragino Sans", "Yu Gothic", sans-serif;
       background: linear-gradient(90deg,
@@ -76,436 +96,117 @@
         0 1px 1px rgba(255, 255, 255, 0.6),
         1px 2px 3px rgba(13, 44, 64, 0.35);
       user-select: none;
-      white-space: nowrap;
-      pointer-events: none;
     }
 
-    /* ===== 盤面（全画面・背景路線図＋駅マス絶対配置）===== */
-    .boardScroll {
+    /* ===== 左メニュー（元すごろく式A案・フロート固定）===== */
+    .fixedPanel {
       position: fixed;
-      inset: 0;
-      overflow: auto;
-      background: #fbf7ee;
-    }
-
-    #board {
-      position: relative;
-      /* 実サイズは client.js が BOARD_W/BOARD_H で上書き */
-    }
-
-    .routeBg {
-      position: absolute;
-      left: 0;
-      top: 0;
-      pointer-events: none;
-    }
-
-    .routeBg svg {
-      display: block;
-    }
-
-    /* 駅マス */
-    .cell {
-      position: absolute;
-      transform: translate(-50%, -50%);
-      width: 96px;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      z-index: 2;
-    }
-
-    .stSign {
-      background: #fff;
-      border: 2px solid #2c3e50;
-      border-radius: 6px;
-      padding: 3px 5px 0;
-      min-width: 78px;
-      text-align: center;
-      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-    }
-
-    .stKanji {
-      font-size: 15px;
-      font-weight: bold;
-      line-height: 1.15;
-      color: #16314a;
-    }
-
-    .stKana {
-      font-size: 9px;
-      color: #5b6b78;
-      line-height: 1.1;
-    }
-
-    .stBand {
-      margin: 2px -5px 0;
-      background: #2c3e50;
-      border-radius: 0 0 4px 4px;
-    }
-
-    .stRomaji {
-      font-size: 8px;
-      color: #fff;
-      padding: 1px 0;
-      letter-spacing: 0.3px;
-    }
-
-    .cell.longName .stKanji {
-      font-size: 12px;
-    }
-
-    .cell.start .stSign {
-      border-color: #2e7d32;
-    }
-
-    .cell.goal .stSign {
-      border-color: #c62828;
-    }
-
-    .stTag {
-      margin-top: 2px;
-      font-size: 10px;
-      font-weight: bold;
-      color: #fff;
-      padding: 1px 8px;
-      border-radius: 8px;
-    }
-
-    .cell.start .stTag {
-      background: #2e7d32;
-    }
-
-    .cell.goal .stTag {
-      background: #c62828;
-    }
-
-    /* コマ置き場 */
-    .pawns {
-      margin-top: 3px;
-      display: flex;
-      flex-wrap: wrap;
-      gap: 2px;
-      justify-content: center;
-      max-width: 140px;
-    }
-
-    /* ===== 721系コマ ===== */
-    .pawnWrap {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .pawnName {
-      font-size: 10px;
-      font-weight: bold;
-      color: #16314a;
-      background: rgba(255, 255, 255, 0.85);
-      border-radius: 4px;
-      padding: 0 3px;
-      margin-top: 1px;
-      white-space: nowrap;
-    }
-
-    .train {
-      --bandColor: #e53935;
-      position: relative;
-      width: 64px;
-      height: 26px;
-    }
-
-    .train.flip {
-      transform: scaleX(-1);
-    }
-
-    .trainBody {
-      position: relative;
-      width: 64px;
-      height: 17px;
-      background: #f4f4f4;
-      border: 1px solid #b0b6bb;
-      border-radius: 4px 7px 4px 4px;
-      overflow: hidden;
-    }
-
-    .trainRoof {
-      position: absolute;
-      top: 0;
-      left: 6px;
-      right: 4px;
-      height: 3px;
-      display: flex;
-      gap: 6px;
-      align-items: center;
-    }
-
-    .trainRoof .ac {
-      width: 8px;
-      height: 2px;
-      background: #9aa1a8;
-      border-radius: 1px;
-    }
-
-    .trainFront {
-      position: absolute;
-      right: 0;
-      top: 0;
-      width: 10px;
-      height: 100%;
-      background: #dfe3e6;
-      border-radius: 0 7px 4px 0;
-    }
-
-    .trainDest {
-      position: absolute;
-      right: 1px;
-      top: 4px;
-      width: 6px;
-      height: 4px;
-      background: #2c3e50;
-      border-radius: 1px;
-    }
-
-    .trainWindows {
-      position: absolute;
-      top: 5px;
-      left: 4px;
-      right: 11px;
-      height: 7px;
-      display: flex;
-      gap: 1px;
-      align-items: center;
-    }
-
-    .trainWindows span {
-      flex: 1 1 auto;
-      height: 6px;
-      background: #4a6072;
-      border-radius: 1px;
-    }
-
-    .trainWindows .cab {
-      flex: 0 0 4px;
-      background: #2c3e50;
-    }
-
-    .trainWindows .door {
-      background: #8a949c;
-    }
-
-    .lineThin {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 5px;
-      height: 1.5px;
-      background: var(--bandColor);
-      opacity: 0.55;
-    }
-
-    .lineThick {
-      position: absolute;
-      left: 0;
-      right: 0;
-      bottom: 1px;
-      height: 3px;
-      background: var(--bandColor);
-    }
-
-    .trainUnder {
-      position: relative;
-      width: 64px;
-      height: 4px;
-    }
-
-    .trainSkirt {
-      position: absolute;
-      left: 2px;
-      right: 2px;
-      top: 0;
-      height: 3px;
-      background: #c2c7cb;
-      border-radius: 0 0 3px 3px;
-    }
-
-    .underBox {
-      position: absolute;
+      top: 70px;
       left: 10px;
-      right: 10px;
-      top: 1px;
-      height: 2px;
-      background: #9aa1a8;
-    }
-
-    .trainWheels {
-      position: relative;
-      width: 64px;
-      height: 5px;
-      display: flex;
-      justify-content: space-around;
-      padding: 0 4px;
-    }
-
-    .bogie {
-      display: flex;
-      gap: 3px;
-    }
-
-    .bogie i {
-      width: 4px;
-      height: 4px;
-      background: #2c3e50;
-      border-radius: 50%;
-    }
-
-    /* ===== 右上ルーレット（フロート・直径50vhはJS）===== */
-    #rouletteWrap {
-      position: fixed;
-      top: 56px;
-      right: 16px;
-      z-index: 90;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    /* 上向きポインタ（三角） */
-    #roulettePointer {
-      width: 0;
-      height: 0;
-      border-left: 12px solid transparent;
-      border-right: 12px solid transparent;
-      border-top: 18px solid #c62828;
-      filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.3));
-      margin-bottom: -4px;
-      z-index: 91;
-    }
-
-    #wheel {
-      border-radius: 50%;
-      box-shadow: 0 6px 16px rgba(0, 0, 0, 0.3);
-      transition: transform 4s cubic-bezier(0.17, 0.67, 0.12, 0.99);
-      background: #fff;
-    }
-
-    /* ===== 左メニュー（フロート固定）===== */
-    #sidePanel {
-      position: fixed;
-      top: 56px;
-      left: 12px;
-      z-index: 90;
       width: 360px;
-      max-height: calc(100vh - 68px);
+      max-height: calc(100vh - 80px);
       overflow-y: auto;
-      display: flex;
-      flex-direction: column;
-      gap: 9px;
+      background: rgba(255, 255, 255, 0.97);
+      border: 2px solid #c9d6e4;
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
+      z-index: 100;
     }
 
-    .panelBox {
-      background: rgba(187, 222, 251, 0.95);
-      border: 1px solid #90caf9;
-      border-radius: 10px;
-      padding: 10px;
-      color: #0d2c40;
-      backdrop-filter: blur(2px);
-    }
-
-    /* 5席 */
     #seats {
       display: flex;
       flex-direction: column;
-      gap: 7px;
+      gap: 8px;
+      margin-bottom: 10px;
     }
 
     .seat {
       display: flex;
       align-items: center;
       gap: 6px;
+      padding: 5px;
       border: 3px solid transparent;
-      border-radius: 9px;
-      padding: 2px;
+      border-radius: 10px;
+      background: #f4f7fa;
+    }
+
+    .seat.empty {
+      background: #eef0f2;
+      opacity: .7;
     }
 
     .seat.current {
-      background: rgba(255, 255, 255, 0.5);
+      /* 枠色は JS でプレイヤーカラーを指定 */
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, .05);
     }
 
-    .seat.empty .seatName {
-      background: #eceff1;
-    }
-
+    /* P1〜P5バッジ：常時グレーアウトの飾り（押せない） */
     .seatBadge {
-      flex: 0 0 40px;
-      text-align: center;
+      flex: 0 0 auto;
+      width: 44px;
+      height: 34px;
+      border-radius: 7px;
       color: #fff;
       font-weight: bold;
-      font-size: 13px;
-      border: none;
-      border-radius: 7px;
-      padding: 7px 0;
-      /* 常時グレーアウトの飾り */
-      opacity: 0.5;
+      font-size: 15px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .18);
+      opacity: .5;
       cursor: default;
     }
 
     .seatBadge:disabled {
-      opacity: 0.5;
+      opacity: .5;
     }
 
     .seatName {
       flex: 1 1 auto;
       min-width: 0;
-      padding: 6px 8px;
+      padding: 7px 9px;
+      font-size: 15px;
+      border: 1px solid #9bb4cc;
       border-radius: 6px;
-      border: 1px solid #90caf9;
-      font-size: 14px;
-      color: #000;
-      font-weight: bold;
+      background: #fff;
     }
 
     .seatName:disabled {
-      background: #eceff1;
-      color: #000;
-      opacity: 1;
-      -webkit-text-fill-color: #000;
+      background: #f0f2f4;
+      color: #333;
     }
 
     .seatRouteBtn {
       flex: 0 0 auto;
-      border: none;
+      padding: 7px 9px;
+      font-size: 13px;
       border-radius: 6px;
-      padding: 6px 7px;
-      font-size: 12px;
-      font-weight: bold;
-      color: #fff;
-      cursor: pointer;
-      box-shadow: 0 3px 0 rgba(0, 0, 0, 0.25);
-      transition: transform 0.05s, box-shadow 0.05s;
-    }
-
-    .seatRouteBtn:active {
-      transform: translateY(3px);
-      box-shadow: 0 0 0 rgba(0, 0, 0, 0.25);
     }
 
     .seatRouteBtn.iwa {
-      background: #d35400;
+      background: #e67e22;
+    }
+
+    .seatRouteBtn.iwa:hover {
+      background: #cf6f17;
     }
 
     .seatRouteBtn.oiw {
-      background: #16a085;
+      background: #1f8b5c;
+    }
+
+    .seatRouteBtn.oiw:hover {
+      background: #18764d;
     }
 
     .seatRouteBtn.selected {
-      outline: 3px solid #ffd54f;
+      outline: 3px solid #1b3a5b;
+      outline-offset: 1px;
     }
 
     .seatRouteBtn:disabled {
-      background: #b0bec5;
-      box-shadow: 0 0 0 rgba(0, 0, 0, 0.25);
-      cursor: default;
+      opacity: .55;
     }
 
     /* 追分ボタン横の着順表示（七並べと同色） */
@@ -518,119 +219,486 @@
       text-align: right;
     }
 
-    .btn {
-      display: inline-block;
-      padding: 8px 14px;
-      margin: 3px 3px 3px 0;
-      border: none;
-      border-radius: 7px;
-      background: #1976d2;
-      color: #fff;
-      font-size: 14px;
-      cursor: pointer;
-      box-shadow: 0 4px 0 rgba(0, 0, 0, 0.3);
-      transition: transform 0.05s, box-shadow 0.05s;
+    .btnRow {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
     }
 
-    .btn:active {
-      transform: translateY(4px);
-      box-shadow: 0 0 0 rgba(0, 0, 0, 0.3);
+    #startBtn {
+      flex: 1;
+      background: #2f7d32;
+      font-weight: bold;
     }
 
-    .btn.green {
-      background: #2e7d32;
+    #startBtn:hover {
+      background: #276628;
     }
 
-    .btn.red {
-      background: #c62828;
+    #resetBtn {
+      flex: 1;
+      background: #d32f2f;
+      font-weight: bold;
     }
 
-    .btn:disabled {
-      background: #b0bec5;
-      cursor: default;
-      box-shadow: 0 0 0 rgba(0, 0, 0, 0.3);
+    #resetBtn:hover {
+      background: #b52626;
     }
 
     #status {
-      font-size: 13px;
-      min-height: 18px;
-      font-weight: bold;
-      color: #0d2c40;
-      margin-top: 6px;
+      font-size: 12px;
+      color: #1b3a5b;
+      margin: 8px 2px 2px;
+      min-height: 14px;
     }
 
     #players {
       font-size: 12px;
       line-height: 1.6;
-      margin-top: 6px;
+      margin-top: 4px;
     }
 
-    /* 結果オーバーレイ */
+    /* ===== ルーレット（右上・単体フロート固定）===== */
+    #rouletteWrap {
+      position: fixed;
+      top: 70px;
+      right: 16px;
+      z-index: 100;
+      /* width/height は JS が直径=縦幅50%で設定 */
+    }
+
+    #pointer {
+      position: absolute;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 0;
+      height: 0;
+      border-left: 12px solid transparent;
+      border-right: 12px solid transparent;
+      border-top: 18px solid #111;
+      z-index: 5;
+    }
+
+    #wheel {
+      display: block;
+      margin: 14px auto 0;
+      transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
+    }
+
+    /* ===== 盤面 ===== */
+    .boardScroll {
+      width: 100%;
+      height: 100vh;
+      overflow: auto;
+      padding: 0;
+      scroll-behavior: smooth;
+    }
+
+    #board {
+      position: relative;
+      width: 6000px;
+      height: 3600px;
+    }
+
+    .routeBg {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .routeBg svg {
+      display: block;
+    }
+
+    .cell {
+      position: absolute;
+      transform: translate(-50%, -50%);
+      width: 130px;
+      background: rgba(247, 247, 247, 0.96);
+      border: 1px solid #cfcfcf;
+      border-radius: 6px;
+      padding: 6px 5px 5px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      z-index: 2;
+    }
+
+    .cell.start {
+      background: rgba(255, 241, 234, 0.97);
+    }
+
+    .cell.goal {
+      background: rgba(255, 248, 226, 0.97);
+    }
+
+    .stTag {
+      position: absolute;
+      top: -8px;
+      right: 6px;
+      font-size: 10px;
+      font-weight: bold;
+      color: #fff;
+      background: #c0562b;
+      padding: 1px 6px;
+      border-radius: 8px;
+    }
+
+    .cell.goal .stTag {
+      background: #d4a017;
+    }
+
+    .stSign {
+      position: relative;
+      background: #fff;
+      border: 3px solid #1a7fc4;
+      border-radius: 0;
+      padding: 5px 4px 22px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+      height: 62px;
+      overflow: hidden;
+    }
+
+    .stKanji {
+      font-size: 16px;
+      font-weight: bold;
+      color: #111;
+      text-align: center;
+      line-height: 1.15;
+      word-break: break-all;
+    }
+
+    .stKana {
+      font-size: 11px;
+      color: #444;
+      text-align: center;
+      line-height: 1.25;
+      margin-top: 2px;
+      word-break: break-all;
+    }
+
+    .stBand {
+      position: absolute;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: #8cc63f;
+      border-radius: 0;
+      padding: 2px 2px 3px;
+    }
+
+    .stRomaji {
+      font-size: 10px;
+      letter-spacing: .3px;
+      color: #fff;
+      text-align: center;
+      line-height: 1.2;
+      word-break: break-all;
+    }
+
+    .cell.longName .stKanji {
+      font-size: 11px;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .cell.longName .stKana {
+      font-size: 8.5px;
+      line-height: 1.1;
+      white-space: nowrap;
+    }
+
+    .cell.longName .stRomaji {
+      font-size: 8px;
+      white-space: nowrap;
+    }
+
+    .pawns {
+      min-height: 46px;
+      margin-top: 5px;
+      display: flex;
+      flex-direction: row;
+      flex-wrap: wrap;
+      gap: 4px;
+      justify-content: center;
+      align-items: flex-start;
+    }
+
+    .pawnWrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 116px;
+    }
+
+    .pawnName {
+      font-size: 10px;
+      color: #333;
+      text-align: center;
+      line-height: 1.15;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: visible;
+    }
+
+    .train {
+      position: relative;
+      width: 116px;
+      height: 40px;
+    }
+
+    .train.flip {
+      transform: scaleX(-1);
+    }
+
+    .train .trainBody {
+      position: relative;
+      width: 116px;
+      height: 28px;
+      background: linear-gradient(#ffffff 0%, #eceff1 32%, #c7ced3 66%, #aeb6bc 100%);
+      border: 1px solid #7d858c;
+      border-radius: 5px 9px 3px 3px;
+      overflow: hidden;
+    }
+
+    .train .trainRoof {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: #aab0b5;
+    }
+
+    .train .trainRoof .ac {
+      position: absolute;
+      top: -2px;
+      width: 16px;
+      height: 4px;
+      background: #8d949a;
+      border: 1px solid #767d83;
+      border-radius: 1px;
+    }
+
+    .train .trainRoof .ac:nth-child(1) {
+      left: 24px;
+    }
+
+    .train .trainRoof .ac:nth-child(2) {
+      left: 52px;
+    }
+
+    .train .trainRoof .ac:nth-child(3) {
+      left: 80px;
+    }
+
+    .train .trainFront {
+      position: absolute;
+      top: 4px;
+      right: 1px;
+      width: 11px;
+      height: 16px;
+      background: linear-gradient(135deg, #2b3138, #4a525a);
+      border: 1px solid #20262c;
+      border-radius: 2px 7px 3px 2px;
+      z-index: 3;
+    }
+
+    .train .trainDest {
+      position: absolute;
+      top: 5px;
+      right: 13px;
+      width: 12px;
+      height: 4px;
+      background: #bfe3ff;
+      border: 1px solid #8db8d6;
+      border-radius: 1px;
+      z-index: 3;
+    }
+
+    .train .lineThin {
+      position: absolute;
+      top: 10px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--bandColor, #2ecc71);
+    }
+
+    .train .lineThick {
+      position: absolute;
+      bottom: 5px;
+      left: 0;
+      right: 0;
+      height: 4px;
+      background: var(--bandColor, #2ecc71);
+    }
+
+    .train .trainWindows {
+      position: absolute;
+      top: 4.5px;
+      left: 4px;
+      right: 26px;
+      height: 9px;
+      display: flex;
+      gap: 2px;
+      align-items: center;
+    }
+
+    .train .trainWindows span {
+      flex: 1;
+      height: 9px;
+      background: linear-gradient(#dff0ff, #bcdcf5);
+      border: 1px solid #9cc0e0;
+      border-radius: 1px;
+    }
+
+    .train .trainWindows .door {
+      flex: 0 0 7px;
+      height: 11px;
+      background: #c3ccd3;
+      border: 1px solid #98a2aa;
+      border-radius: 1px;
+    }
+
+    .train .trainWindows .cab {
+      flex: 0 0 9px;
+      height: 9px;
+      background: linear-gradient(#cfe6ff, #a9cdee);
+      border: 1px solid #8fb6da;
+      border-radius: 1px 3px 1px 1px;
+    }
+
+    .train .trainUnder {
+      position: relative;
+      width: 110px;
+      height: 4px;
+      margin: 0 auto;
+    }
+
+    .train .trainSkirt {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 4px;
+      background: #6b7278;
+      border-radius: 0 0 2px 2px;
+    }
+
+    .train .underBox {
+      position: absolute;
+      left: 38px;
+      width: 34px;
+      top: 0;
+      height: 5px;
+      background: #5a6166;
+      border-radius: 0 0 1px 1px;
+    }
+
+    .train .trainWheels {
+      position: absolute;
+      bottom: 0;
+      left: 8px;
+      right: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .train .bogie {
+      position: relative;
+      width: 22px;
+      height: 8px;
+      background: #3b4146;
+      border-radius: 2px;
+    }
+
+    .train .bogie i {
+      position: absolute;
+      bottom: -2px;
+      width: 6px;
+      height: 6px;
+      background: #222;
+      border: 1px solid #555;
+      border-radius: 50%;
+    }
+
+    .train .bogie i.w1 {
+      left: 2px;
+    }
+
+    .train .bogie i.w2 {
+      right: 2px;
+    }
+
     #result {
       position: fixed;
-      top: 50%;
+      bottom: 14px;
       left: 50%;
-      transform: translate(-50%, -50%) scale(0.9);
-      z-index: 200;
+      transform: translateX(-50%);
+      max-width: 520px;
       background: #fff;
-      border: 3px solid #c62828;
-      border-radius: 14px;
-      padding: 20px 30px;
-      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
-      font-size: 18px;
-      line-height: 1.8;
-      opacity: 0;
-      pointer-events: none;
-      transition: opacity 0.3s, transform 0.3s;
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-size: 15px;
+      line-height: 1.9;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .2);
+      display: none;
+      z-index: 150;
     }
 
     #result.show {
-      opacity: 1;
-      transform: translate(-50%, -50%) scale(1);
-      pointer-events: auto;
+      display: block;
     }
 
     #result h2 {
-      margin: 0 0 10px;
-      text-align: center;
-      color: #c62828;
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: #1b3a5b;
     }
   </style>
 </head>
 
 <body>
-  <!-- 上中央タイトル -->
-  <div id="title">オンライン鉄道すごろく</div>
-
-  <!-- 盤面（全画面スクロール） -->
-  <div class="boardScroll">
-    <div id="board"></div>
+  <div class="titleBanner">
+    <h1 class="ttl">オンライン鉄道すごろく</h1>
   </div>
 
-  <!-- 左メニュー -->
-  <div id="sidePanel">
-    <div class="panelBox">
-      <div id="seats"></div>
-      <div style="margin-top:10px;">
-        <button class="btn green" id="startBtn">ゲーム開始</button>
-        <button class="btn red" id="resetBtn">リセット</button>
-      </div>
-      <div id="status">サーバーに接続中…</div>
-      <div id="players"></div>
+  <div class="fixedPanel">
+    <div id="seats"><!-- 5席(P1〜P5)は client.js が生成 --></div>
+
+    <div class="btnRow">
+      <button id="startBtn">ゲーム開始</button>
+      <button id="resetBtn">リセット</button>
     </div>
+
+    <div id="status">接続中...</div>
+    <div id="players"></div>
   </div>
 
-  <!-- 右上ルーレット -->
   <div id="rouletteWrap">
-    <div id="roulettePointer"></div>
+    <div id="pointer"></div>
     <canvas id="wheel" width="360" height="360"></canvas>
   </div>
 
-  <!-- 結果 -->
+  <div class="boardScroll">
+    <div id="board">
+      <!-- 背景SVGと駅セルは client.js が生成・絶対配置 -->
+    </div>
+  </div>
+
   <div id="result"></div>
 
   <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js"></script>
+  <script src="/client.js"></script>
 </body>
 
 </html>
