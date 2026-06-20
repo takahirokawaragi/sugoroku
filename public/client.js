@@ -1,12 +1,17 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.3.2
-   日付: 2026-06-20（土）16:49 JST
-   v3.3.2での変更点:
+   バージョン: v3.3.3
+   日付: 2026-06-20（土）16:59 JST
+   v3.3.3での変更点:
+     - ルーレット全体を v3.3.2 の 1.5倍に拡大
+       （index.html は無改変。canvas解像度/CSS表示サイズ/枠サイズを
+         drawWheel 内で設定して 1.5倍化）
+     - 数字を外周寄りに移動し、フォントを大きくして元画像に忠実化
+   --- 以下 過去履歴 ---
+   v3.3.2:
      - ルーレットを添付画像のデザインに忠実に再現
        中心から外へ：小さな真円 → 大きな真円 → 十角形リング
        → 放射状の目盛り線10本 → カラフルな10分割（数字1〜10）→ 外枠
-   --- 以下 過去履歴 ---
    v3.3:
      - 共通区間(白石→苗穂→札幌→…→小樽)の並び順バグを修正
      - computeLayout の列計算を見直し、駅の重なりをなくした
@@ -53,6 +58,22 @@ const routeOiwakeBtn = document.getElementById("routeOiwakeBtn");
 const routeIwamizawaBtn = document.getElementById("routeIwamizawaBtn");
 const routeLabel = document.getElementById("routeLabel");
 const routeArea = document.getElementById("routeArea");
+
+// ===== ルーレットを 1.5倍化（index.html は無改変）=====
+// 従来：内部解像度260 / CSS表示160px / 枠160×174
+// 1.5倍：CSS表示240px。内部解像度は高精細用に360で描画。
+(function enlargeWheel() {
+  if (!wheel) return;
+  wheel.width = 360;          // 内部解像度
+  wheel.height = 360;
+  wheel.style.width = "240px"; // 表示サイズ＝160 × 1.5
+  wheel.style.height = "240px";
+  const wrap = document.getElementById("rouletteWrap");
+  if (wrap) {
+    wrap.style.width = "240px";
+    wrap.style.height = "261px"; // 240 + ポインタ分の余白(約21px)
+  }
+})();
 
 // ===== 音（iOS Safari対策：壊れたら作り直す）=====
 let audioCtx = null;
@@ -110,7 +131,7 @@ function fanfare() {
   seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
 }
 
-// ===== ルーレット描画（v3.3.2：画像のデザインを忠実に再現）=====
+// ===== ルーレット描画（v3.3.3：画像デザイン＋数字を外周寄りに大型化）=====
 // 中心から外へ：小さな真円 → 大きな真円 → 十角形リング
 //   → 放射状の目盛り線(10) → カラフル10分割(数字) → 外枠
 function drawWheel() {
@@ -125,7 +146,7 @@ function drawWheel() {
   ctx.lineWidth = 2; ctx.strokeStyle = "#cccccc"; ctx.stroke();
 
   const outerR = r - 6;       // カラー帯の外端
-  const innerR = r * 0.46;    // カラー帯の内端
+  const innerR = r * 0.42;    // カラー帯の内端（帯を少し広げて数字を外へ）
   const lineGray = "#9aa1a8";
 
   // --- 外周：カラフルな10分割セグメント（数字つき）---
@@ -138,14 +159,14 @@ function drawWheel() {
     ctx.closePath();
     ctx.fillStyle = WHEEL_COLORS[i]; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
-    // 数字
+    // 数字（外周寄り・大きめ）
     ctx.save();
     ctx.translate(r, r);
     ctx.rotate(start + seg / 2);
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillStyle = "#fff"; ctx.font = "bold 26px sans-serif";
-    ctx.lineWidth = 3; ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    const textR = (outerR + innerR) / 2;
+    ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(r * 0.20) + "px sans-serif";
+    ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.35)";
+    const textR = outerR - (outerR * 0.16); // ★外周寄りに配置
     ctx.rotate(Math.PI / 2);
     ctx.strokeText(String(i + 1), 0, -textR + 4);
     ctx.fillText(String(i + 1), 0, -textR + 4);
