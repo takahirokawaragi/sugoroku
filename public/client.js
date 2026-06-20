@@ -1,14 +1,13 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.5.0
-   日付: 2026-06-20（土）23:14 JST
-   v3.5.0での変更点:
-     - 手番プレイヤーのコマを常に画面中央へ固定追従させる仕様に変更
-       （自分の番だけでなく、全員の画面で「今動いているコマ」が中央）
-       scrollIntoView をやめ、盤面ビューポート(.boardScroll)を
-       scrollTo で動かして対象セルを中央に置く方式へ
-     - 駅セル幅80%・看板の長方形化は index.html v3.5.0 側で対応
+   バージョン: v3.5.1
+   日付: 2026-06-20（土）23:29 JST
+   v3.5.1での変更点:
+     - 721系コマの構造を精密版に変更（makeTrain を更新）
+       緑ライン2本・窓列・台車(bogie)・スカート・色ドットを描画
+     - 緑帯の修正・駅セル幅は index.html v3.5.1 側で対応
    --- 以下 過去履歴 ---
+   v3.5.0: 手番プレイヤーを画面中央固定追従・看板長方形化・駅セル80%幅
    v3.4.2: 数字をカラー帯の上下中央に配置
    v3.4.1: 回すボタンをHTMLから削除・rollBtn依存を廃止（canRoll化）
    v3.4.0: 帯を70%幅・数字を中心寄せ・10同サイズ・本体クリックで回転
@@ -17,7 +16,7 @@
    v3.2:   ルーレット画面固定・コマ追従
    v3.1:   両ルート同時表示（外周ループ）・コマ進行方向で自動反転
    v2.2:   iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js v3.5 / index.html v3.5.0 とセットで使うこと
+   ※ server.js v3.5 / index.html v3.5.1 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -42,11 +41,10 @@ let lastShownSeq = 0;
 let animating = false;
 let latestState = null;
 
-// ★ルーレットを回せるか（旧 rollBtn.disabled の代わり）
 let canRoll = false;
 
 const boardEl = document.getElementById("board");
-const boardScrollEl = document.querySelector(".boardScroll"); // ★盤面ビューポート
+const boardScrollEl = document.querySelector(".boardScroll");
 const statusEl = document.getElementById("status");
 const playersEl = document.getElementById("players");
 const resultEl = document.getElementById("result");
@@ -62,19 +60,17 @@ const routeLabel = document.getElementById("routeLabel");
 const routeArea = document.getElementById("routeArea");
 
 // ===== ルーレットを 1.5倍化（index.html は無改変）=====
-// 従来：内部解像度260 / CSS表示160px / 枠160×174
-// 1.5倍：CSS表示240px。内部解像度は高精細用に360で描画。
 (function enlargeWheel() {
   if (!wheel) return;
-  wheel.width = 360;          // 内部解像度
+  wheel.width = 360;
   wheel.height = 360;
-  wheel.style.width = "240px"; // 表示サイズ＝160 × 1.5
+  wheel.style.width = "240px";
   wheel.style.height = "240px";
-  wheel.style.cursor = "pointer"; // クリックで回せることを示す
+  wheel.style.cursor = "pointer";
   const wrap = document.getElementById("rouletteWrap");
   if (wrap) {
     wrap.style.width = "240px";
-    wrap.style.height = "261px"; // 240 + ポインタ分の余白(約21px)
+    wrap.style.height = "261px";
   }
 })();
 
@@ -134,28 +130,24 @@ function fanfare() {
   seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
 }
 
-// ===== ルーレット描画（v3.4.2：数字を帯の上下中央に揃える）=====
-// 中心から外へ：小さな真円 → 大きな真円 → 十角形リング
-//   → 放射状の目盛り線(10) → カラフル10分割(数字) → 外枠
+// ===== ルーレット描画（数字を帯の上下中央に揃える）=====
 function drawWheel() {
   const size = wheel.width;
   const r = size / 2;
   const seg = (Math.PI * 2) / SEGMENTS;
   ctx.clearRect(0, 0, size, size);
 
-  // 全体の白い土台＋いちばん外側の細い外枠
   ctx.beginPath(); ctx.arc(r, r, r - 2, 0, Math.PI * 2);
   ctx.fillStyle = "#fff"; ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = "#cccccc"; ctx.stroke();
 
-  const outerR = r - 6;                  // カラー帯の外端
-  const prevInnerR = r * 0.50;           // v3.3.5 のカラー帯内端
-  const prevBandW = outerR - prevInnerR; // v3.3.5 のカラー帯幅
-  const bandW = prevBandW * 0.70;        // 帯幅は70%のまま
-  const innerR = outerR - bandW;         // 帯の内端
+  const outerR = r - 6;
+  const prevInnerR = r * 0.50;
+  const prevBandW = outerR - prevInnerR;
+  const bandW = prevBandW * 0.70;
+  const innerR = outerR - bandW;
   const lineGray = "#9aa1a8";
 
-  // --- 外周：カラフルな10分割セグメント（数字つき）---
   for (let i = 0; i < SEGMENTS; i++) {
     const start = i * seg - Math.PI / 2;
     const end = (i + 1) * seg - Math.PI / 2;
@@ -165,7 +157,6 @@ function drawWheel() {
     ctx.closePath();
     ctx.fillStyle = WHEEL_COLORS[i]; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
-    // 数字（帯の上下中央に配置。全て同じサイズ）
     const label = String(i + 1);
     ctx.save();
     ctx.translate(r, r);
@@ -173,64 +164,50 @@ function drawWheel() {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(r * 0.30) + "px sans-serif";
     ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    const textR = (outerR + innerR) / 2; // 帯の上下中央
+    const textR = (outerR + innerR) / 2;
     ctx.rotate(Math.PI / 2);
     ctx.strokeText(label, 0, -textR);
     ctx.fillText(label, 0, -textR);
     ctx.restore();
   }
 
-  // 中心からの各層の半径
-  const decagonR   = r * 0.30;   // 十角形リングの半径
-  const circleBig  = r * 0.165;  // 大きな真円
-  const circleSmall= r * 0.085;  // 小さな真円
+  const decagonR   = r * 0.30;
+  const circleBig  = r * 0.165;
+  const circleSmall= r * 0.085;
 
-  // --- 放射状の目盛り線（10本）：十角形の各辺の外から内端へ ---
-  const tickOuter = innerR - 4;       // カラー帯のすぐ内側
-  const tickInner = decagonR + 4;     // 十角形の少し外
+  const tickOuter = innerR - 4;
+  const tickInner = decagonR + 4;
   ctx.strokeStyle = lineGray;
   ctx.lineWidth = 3;
   ctx.lineCap = "round";
   for (let i = 0; i < SEGMENTS; i++) {
-    const a = (i + 0.5) * seg - Math.PI / 2; // セグメント中央の角度
+    const a = (i + 0.5) * seg - Math.PI / 2;
     ctx.beginPath();
     ctx.moveTo(r + Math.cos(a) * tickInner, r + Math.sin(a) * tickInner);
     ctx.lineTo(r + Math.cos(a) * tickOuter, r + Math.sin(a) * tickOuter);
     ctx.stroke();
   }
 
-  // --- 十角形リング（中が白、灰色の輪郭）---
   ctx.beginPath();
   for (let k = 0; k < 10; k++) {
-    const ang = k * seg - Math.PI / 2; // セグメント境界の角度
+    const ang = k * seg - Math.PI / 2;
     const x = r + Math.cos(ang) * decagonR;
     const y = r + Math.sin(ang) * decagonR;
     if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
   }
   ctx.closePath();
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.lineWidth = 3;
-  ctx.strokeStyle = lineGray;
-  ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.fill();
+  ctx.lineWidth = 3; ctx.strokeStyle = lineGray; ctx.stroke();
 
-  // --- 大きな真円 ---
   ctx.beginPath();
   ctx.arc(r, r, circleBig, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.lineWidth = 2.5;
-  ctx.strokeStyle = lineGray;
-  ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.fill();
+  ctx.lineWidth = 2.5; ctx.strokeStyle = lineGray; ctx.stroke();
 
-  // --- 小さな真円（いちばん内側）---
   ctx.beginPath();
   ctx.arc(r, r, circleSmall, 0, Math.PI * 2);
-  ctx.fillStyle = "#ffffff";
-  ctx.fill();
-  ctx.lineWidth = 2;
-  ctx.strokeStyle = lineGray;
-  ctx.stroke();
+  ctx.fillStyle = "#ffffff"; ctx.fill();
+  ctx.lineWidth = 2; ctx.strokeStyle = lineGray; ctx.stroke();
 }
 drawWheel();
 
@@ -263,10 +240,10 @@ const DOWN_ROW = 7;
 
 function computeLayout() {
   const result = { oiwake: [], iwamizawa: [] };
-  const csI = commonStart.iwamizawa; // 岩見沢の分岐駅数（栗山〜厚別）
-  const csO = commonStart.oiwake;    // 追分の分岐駅数（栗山〜平和）
-  const branchMax = Math.max(csI, csO); // 長いほうの分岐に合わせる
-  const commonLen = routes.iwamizawa.length - csI; // 共通区間の駅数（白石〜小樽）
+  const csI = commonStart.iwamizawa;
+  const csO = commonStart.oiwake;
+  const branchMax = Math.max(csI, csO);
+  const commonLen = routes.iwamizawa.length - csI;
 
   const RIGHT_COL = branchMax + commonLen + 1;
 
@@ -286,7 +263,6 @@ function computeLayout() {
   return result;
 }
 
-// 現在の各プレイヤー位置（lastShownSeqまで反映）
 function positionsUpToShown() {
   const pos = {};
   latestState.players.forEach((p, i) => { pos[i] = 0; });
@@ -342,6 +318,7 @@ function makeCell(routeKey, item) {
   return cell;
 }
 
+// ===== 721系コマ（精密版）=====
 function makeTrain(colorIndex, name, dir) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -350,16 +327,26 @@ function makeTrain(colorIndex, name, dir) {
   if (dir === "L") train.classList.add("flip");
   train.style.setProperty("--bandColor", COLORS[colorIndex]);
   train.innerHTML =
+    '<div class="colorDot"></div>' +
     '<div class="trainBody">' +
       '<div class="trainRoof"></div>' +
       '<div class="trainWindows">' +
-        '<span class="door"></span><span></span><span></span><span></span>' +
-        '<span class="door"></span><span class="cab"></span>' +
+        '<span class="cab"></span>' +
+        '<span class="door"></span>' +
+        '<span></span><span></span><span></span>' +
+        '<span class="door"></span>' +
+        '<span></span><span></span>' +
+        '<span class="door"></span>' +
+        '<span class="cab"></span>' +
       '</div>' +
-      '<div class="trainBand"></div>' +
+      '<div class="lineThin"></div>' +
+      '<div class="lineThick"></div>' +
     '</div>' +
     '<div class="trainSkirt"></div>' +
-    '<div class="trainWheels"><i></i><i></i><i></i><i></i></div>';
+    '<div class="trainWheels">' +
+      '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
+      '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
+    '</div>';
   const nm = document.createElement("div");
   nm.className = "pawnName"; nm.textContent = name;
   wrap.appendChild(train); wrap.appendChild(nm);
@@ -409,7 +396,6 @@ function renderBoard(positions, override) {
 function centerOnCell(pos, rk, smooth) {
   const cell = cellMap[rk + ":" + pos];
   if (!cell || !boardScrollEl) return;
-  // セルの中心を、ビューポートの中央に合わせる scroll 量を計算
   const targetLeft = cell.offsetLeft + cell.offsetWidth / 2 - boardScrollEl.clientWidth / 2;
   const targetTop  = cell.offsetTop + cell.offsetHeight / 2 - boardScrollEl.clientHeight / 2;
   boardScrollEl.scrollTo({
@@ -419,15 +405,13 @@ function centerOnCell(pos, rk, smooth) {
   });
 }
 
-// 今の手番（または直近に動いた）プレイヤーを中央に置く
 function centerOnActivePlayer(smooth) {
   if (!latestState) return;
   let idx = -1;
   if (latestState.started && !latestState.finished &&
       typeof latestState.currentTurn === "number") {
-    idx = latestState.currentTurn; // 手番のプレイヤー
+    idx = latestState.currentTurn;
   } else {
-    // 開始前・終了後は自分を中央に（いなければ先頭）
     idx = latestState.players.findIndex((p) => p.id === myId);
     if (idx < 0) idx = 0;
   }
@@ -445,7 +429,6 @@ function animateSteps(playerIndex, from, to, onDone) {
     current += 1;
     renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
     stepSound();
-    // 動いている手番プレイヤーを常に中央へ（全員の画面で）
     centerOnCell(current, rk, true);
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
     setTimeout(stepOnce, 350);
@@ -465,7 +448,6 @@ function processNextMove() {
   const rk = latestState.players[next.index].routeKey || "oiwake";
   statusEl.textContent = next.name + " がルーレットを回しています...";
   renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
-  // 回す前に、動くプレイヤーを中央へ寄せておく
   centerOnCell(next.from, rk, true);
 
   spinTo(next.dice, () => {
@@ -578,7 +560,6 @@ function finalizeState(state) {
     : (current ? current.name + " の番です..." : "");
   canRoll = !!myTurn && !animating;
 
-  // 手番のプレイヤーを中央へ（全員の画面で）
   if (!animating) centerOnActivePlayer(true);
 }
 
