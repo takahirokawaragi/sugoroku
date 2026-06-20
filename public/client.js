@@ -1,32 +1,39 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.7.0
-   日付: 2026-06-21（日）05:57 JST
-   v3.7.0での変更点:
-     - 左メニューを七並べ式の5席(P1〜P5)に刷新。
-       各行＝カラーバッジ＋名前入力＋岩見沢/追分ボタン。
-       自分の席だけ入力・操作可、他席は表示のみ、空席はグレー。
-       名前を入れてルートボタンを押すと setName→setRoute で確定。
-     - 手番表示の文字を廃止。手番の人の席をプレイヤーカラーの枠で囲む。
-     - ルーレットを右上に単体フロート配置。直径＝端末縦幅の50%(50vh)。
-       描画(drawWheel)・回転(spinTo)は一切変更なし、表示サイズのみ拡大。
-     - 上中央に「オンライン鉄道すごろく」タイトルバナーを常時固定表示。
-     - 統一プレイヤーカラーに変更：
-       P1赤 #e74c3c / P2青 #3498db / P3緑 #2ecc71 /
-       P4オレンジ #e67e22 / P5紫 #9b59b6（全ゲーム共通）。
-     - server.js は変更不要。盤面・コマ・座標は v3.6.6 を維持。
+   バージョン: v3.7.1
+   日付: 2026-06-21（日）06:26 JST
+   v3.7.1での変更点:
+     - 左メニューを「元のすごろく式」に差し戻し（A案）：
+       ・P1〜P5バッジは常時グレーアウトの飾り（席ロックなし）。
+       ・5つの名前入力欄はどこでも入力可（自席ロックを廃止）。
+       ・各行に岩見沢/追分ボタンを残し、名前を入れて押すと確定。
+     - 追分ボタンの横に着順「1位〜5位」を表示（.seatRank）。
+       サーバーの p.rank を使用。未ゴールは空欄。
+     - 統一プレイヤーカラーを七並べと完全一致に変更：
+       P1 #e53935 / P2 #1e88e5 / P3 #43a047 /
+       P4 #fb8c00 / P5 #8e24aa（全ゲーム共通）。
+     - タイトル「オンライン鉄道すごろく」を七並べと同一デザインに
+       （ヒラギノ角ゴW9＋レインボーグラデ＋縁取り）。CSSは index.html 側。
+     - 音をビープ合成から mp3/wav 再生へ切替（public/sounds/）。
+       手番=yourTurn / ボタン=button / ルーレット=roll / ゴール=goal。
+       ファイル未配置・再生失敗時は無音で続行。
+     - 盤面 MARGIN を 1100→1800 へ拡大。小樽（左上端）到達時も
+       コマが画面の上下左右中央へ来るよう余白を確保。
+     - ルーレット右上フロート・直径50vh、盤面・コマ・座標は v3.6.6 を維持。
+     - server.js は変更不要。
    --- 以下 過去履歴 ---
+   v3.7.0: 左メニューを七並べ式5席に刷新・ルーレット右上分離・タイトルバナー固定
    v3.6.6: 沼ノ端を最下段へ・合流末尾を白石下側に配置し平和付近の重なり解消
    v3.6.5: 追分経由の北上区間を縦一直線化
    v3.6.3: 駅座標を白石中心の三差路で全面再設計
    v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
    v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
-   ※ server.js v3.5 / index.html v3.7.0 とセットで使うこと
+   ※ server.js v3.5 / index.html v3.7.1 とセットで使うこと
    ========================================================= */
 
 const socket = io();
-// 統一プレイヤーカラー（全ゲーム共通）
-const COLORS = ["#e74c3c", "#3498db", "#2ecc71", "#e67e22", "#9b59b6"];
+// 統一プレイヤーカラー（全ゲーム共通・七並べと一致）
+const COLORS = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa"];
 const SEGMENTS = 10;
 const MAX_SEATS = 5;
 
@@ -50,8 +57,8 @@ let latestState = null;
 
 let canRoll = false;
 
-// 自分が入力中の名前（確定前の保持用・席ごと）
-let myDraftName = "";
+// 5席ぶんの下書き名前（席ロックなし＝どこでも入力可）
+let draftNames = ["", "", "", "", ""];
 
 const boardEl = document.getElementById("board");
 const boardScrollEl = document.querySelector(".boardScroll");
@@ -68,7 +75,8 @@ const ctx = wheel.getContext("2d");
 //  駅座標テーブル（白石中心の三差路・広域図準拠）
 //  pos は server.js の配列インデックスと一致
 // =========================================================
-const MARGIN = 1100;
+// v3.7.1: 小樽（左上端）到達時もコマを画面中央へ置けるよう余白拡大
+const MARGIN = 1800;
 
 // 白石の RAW 基準座標
 const SHI_X = 3400;
@@ -184,60 +192,68 @@ function applyWheelSize() {
 }
 window.addEventListener("resize", applyWheelSize);
 
-// ===== 音（iOS Safari対策：壊れたら作り直す）=====
-let audioCtx = null;
-function createAudio() {
-  try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
-  catch (e) { audioCtx = null; }
-}
-function unlockAudio() {
-  if (!audioCtx) { createAudio(); }
-  if (!audioCtx) return;
-  if (audioCtx.state === "running") return;
-  try { audioCtx.resume(); } catch (e) {}
-  if (audioCtx.state !== "running") {
-    try { audioCtx.close(); } catch (e) {}
-    createAudio();
-    if (audioCtx) { try { audioCtx.resume(); } catch (e) {} }
-  }
-}
-document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && audioCtx && audioCtx.state !== "running") {
-    try { audioCtx.resume(); } catch (e) {}
-  }
-});
+// =========================================================
+//  音（mp3/wav 再生・public/sounds/）
+//  ファイル未配置や再生失敗時は無音で続行。
+//  - yourTurn : 自分の手番が回ってきた時
+//  - button   : 各ボタン押下
+//  - roll     : ルーレット回転中
+//  - goal     : ゴール
+// =========================================================
+const SOUND_FILES = {
+  yourTurn: "/sounds/yourTurn.mp3",
+  button: "/sounds/button.mp3",
+  roll: "/sounds/roll.mp3",
+  goal: "/sounds/goal.mp3",
+};
+const audioCache = {};
+let audioUnlocked = false;
 
-function beep(freq, durationMs, type = "square", volume = 0.2) {
-  if (!audioCtx || audioCtx.state !== "running") return;
-  const osc = audioCtx.createOscillator();
-  const gain = audioCtx.createGain();
-  osc.type = type; osc.frequency.value = freq; gain.gain.value = volume;
-  osc.connect(gain); gain.connect(audioCtx.destination);
-  osc.start(); osc.stop(audioCtx.currentTime + durationMs / 1000);
+function preloadSounds() {
+  Object.keys(SOUND_FILES).forEach((key) => {
+    try {
+      const a = new Audio(SOUND_FILES[key]);
+      a.preload = "auto";
+      audioCache[key] = a;
+    } catch (e) { /* ignore */ }
+  });
 }
-function clickSound(kind) {
-  unlockAudio();
-  if (kind === "name")  { beep(880, 90, "square", 0.22); setTimeout(() => beep(1320, 120, "square", 0.22), 90); }
-  else if (kind === "start") { beep(523, 110, "triangle", 0.25); setTimeout(() => beep(784, 150, "triangle", 0.25), 110); }
-  else if (kind === "reset") { beep(440, 110, "sawtooth", 0.2); setTimeout(() => beep(330, 140, "sawtooth", 0.2), 110); }
-  else if (kind === "route") { beep(740, 80, "square", 0.2); setTimeout(() => beep(988, 100, "square", 0.2), 80); }
-  else { beep(700, 90, "square", 0.2); }
+preloadSounds();
+
+// 初回のユーザー操作で音を解放（iOS/モバイル対策）
+function unlockAudio() {
+  if (audioUnlocked) return;
+  audioUnlocked = true;
+  Object.keys(audioCache).forEach((key) => {
+    const a = audioCache[key];
+    if (!a) return;
+    try {
+      a.muted = true;
+      const p = a.play();
+      if (p && p.then) {
+        p.then(() => { a.pause(); a.currentTime = 0; a.muted = false; })
+         .catch(() => { a.muted = false; });
+      } else {
+        a.pause(); a.currentTime = 0; a.muted = false;
+      }
+    } catch (e) { /* ignore */ }
+  });
 }
-let tickTimer = null;
-function startTicking() {
-  let interval = 60;
-  const tick = () => { beep(900, 30, "square", 0.12); interval += 12; if (interval < 280) tickTimer = setTimeout(tick, interval); };
-  tick();
+document.addEventListener("pointerdown", unlockAudio, { once: false });
+
+function playSound(key) {
+  const a = audioCache[key];
+  if (!a) return;
+  try {
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) { /* ignore */ }
 }
-function stopTicking() { if (tickTimer) { clearTimeout(tickTimer); tickTimer = null; } }
-function stopSound() { beep(660, 120, "triangle", 0.3); setTimeout(() => beep(880, 160, "triangle", 0.3), 120); }
-function stepSound() { beep(1200, 60, "square", 0.2); }
-function fanfare() {
-  const seq = [
-    { f: 523, t: 0, d: 140 }, { f: 523, t: 160, d: 140 }, { f: 523, t: 320, d: 140 },
-    { f: 659, t: 480, d: 260 }, { f: 784, t: 760, d: 260 }, { f: 1047, t: 1040, d: 520 }
-  ];
-  seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
+function stopSoundFx(key) {
+  const a = audioCache[key];
+  if (!a) return;
+  try { a.pause(); a.currentTime = 0; } catch (e) {}
 }
 
 // ===== ルーレット描画（数字を帯の上下中央に揃える・変更なし）=====
@@ -322,7 +338,7 @@ function drawWheel() {
 drawWheel();
 
 function spinTo(dice, onStop) {
-  startTicking();
+  playSound("roll");
   const seg = 360 / SEGMENTS;
   const targetCenter = (dice - 1) * seg + seg / 2;
   const finalFacing = (360 - targetCenter) % 360;
@@ -331,7 +347,7 @@ function spinTo(dice, onStop) {
   if (delta < 0) delta += 360;
   currentRotation += delta + 360 * 5;
   wheel.style.transform = `rotate(${currentRotation}deg)`;
-  setTimeout(() => { stopTicking(); stopSound(); if (onStop) setTimeout(onStop, 400); }, 4000);
+  setTimeout(() => { stopSoundFx("roll"); if (onStop) setTimeout(onStop, 400); }, 4000);
 }
 
 // ===== 駅情報の取得（ルート別）=====
@@ -565,7 +581,6 @@ function animateSteps(playerIndex, from, to, onDone) {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
     renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
-    stepSound();
     centerOnCell(current, rk, true);
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
     setTimeout(stepOnce, 350);
@@ -591,7 +606,7 @@ function processNextMove() {
       lastShownSeq = next.seq;
       if (next.to >= goals[rk] && !fanfaredIndexes[next.index]) {
         fanfaredIndexes[next.index] = true;
-        fanfare();
+        playSound("goal");
       }
       animating = false;
       processNextMove();
@@ -609,22 +624,18 @@ function tryRoll() {
 wheel.addEventListener("click", tryRoll);
 
 // =========================================================
-//  七並べ式 5席メニュー
-//  自分の席だけ入力・操作可。他席は表示のみ。空席はグレー。
-//  名前を入れて岩見沢/追分を押すと setName→setRoute で確定。
+//  5席メニュー（元のすごろく式・A案）
+//   ・P1〜P5バッジは常時グレーアウトの飾り（席ロックなし）。
+//   ・5つの名前欄はどこでも入力可。
+//   ・各行の岩見沢/追分ボタンで、その席の名前＋ルートを確定。
+//   ・追分ボタンの横に着順「1位〜5位」を表示（p.rank）。
 // =========================================================
-function mySeatIndex(state) {
-  return state.players.findIndex((p) => p.id === myId);
-}
-
 function renderSeats(state) {
   if (!seatsEl) return;
-  const mySeat = mySeatIndex(state);
   seatsEl.innerHTML = "";
 
   for (let i = 0; i < MAX_SEATS; i++) {
     const p = state.players[i]; // 居なければ undefined（空席）
-    const isMe = mySeat === i && !!p;
     const isOccupied = !!p;
     const isCurrent = state.started && !state.finished && state.currentTurn === i && isOccupied;
 
@@ -636,31 +647,29 @@ function renderSeats(state) {
       row.style.borderColor = COLORS[i];
     }
 
-    // カラーバッジ
-    const badge = document.createElement("div");
+    // カラーバッジ（常時グレーアウトの飾り＝ボタンだが押せない）
+    const badge = document.createElement("button");
     badge.className = "seatBadge";
     badge.style.background = COLORS[i];
     badge.textContent = "P" + (i + 1);
+    badge.disabled = true;
     row.appendChild(badge);
 
-    // 名前入力欄
+    // 名前入力欄（席ロックなし：どこでも入力可）
     const input = document.createElement("input");
     input.className = "seatName";
     input.type = "text";
     input.maxLength = 12;
     input.placeholder = "なまえ";
-    if (isMe) {
-      // 自分の席：未確定なら下書き、確定済みなら確定名
+    if (isOccupied) {
       const confirmed = p.name && !/^Player\d+$/.test(p.name);
-      input.value = confirmed ? p.name : myDraftName;
-      input.disabled = state.started;
-      input.addEventListener("input", (e) => { myDraftName = e.target.value; });
+      input.value = confirmed ? p.name : (draftNames[i] || "");
+      input.disabled = state.started; // 開始後は固定
     } else {
-      // 他席：確定名のみ表示（仮名Playerは空欄扱い）
-      const confirmed = p && p.name && !/^Player\d+$/.test(p.name);
-      input.value = confirmed ? p.name : "";
-      input.disabled = true;
+      input.value = draftNames[i] || "";
+      input.disabled = state.started;
     }
+    input.addEventListener("input", (e) => { draftNames[i] = e.target.value; });
     row.appendChild(input);
 
     // 岩見沢ボタン
@@ -679,9 +688,9 @@ function renderSeats(state) {
       else oiwBtn.classList.add("selected");
     }
 
-    if (isMe && !state.started) {
-      iwaBtn.addEventListener("click", () => confirmSeat("iwamizawa", input));
-      oiwBtn.addEventListener("click", () => confirmSeat("oiwake", input));
+    if (!state.started) {
+      iwaBtn.addEventListener("click", () => confirmSeat(i, "iwamizawa", input));
+      oiwBtn.addEventListener("click", () => confirmSeat(i, "oiwake", input));
     } else {
       iwaBtn.disabled = true;
       oiwBtn.disabled = true;
@@ -689,25 +698,38 @@ function renderSeats(state) {
     row.appendChild(iwaBtn);
     row.appendChild(oiwBtn);
 
+    // 追分ボタンの横に着順「1位〜5位」（未ゴールは空欄）
+    const rank = document.createElement("span");
+    rank.className = "seatRank";
+    rank.dataset.seat = String(i);
+    if (isOccupied && p.rank && p.rank > 0) {
+      rank.textContent = p.rank + "位";
+    } else {
+      rank.textContent = "";
+    }
+    row.appendChild(rank);
+
     seatsEl.appendChild(row);
   }
 }
 
-// 名前を確定→ルートを確定（七並べ式：ルートボタンで両方送る）
-function confirmSeat(routeKey, input) {
-  clickSound("route");
+// 名前を確定→ルートを確定（その席のルートボタンで両方送る）
+function confirmSeat(seatIndex, routeKey, input) {
+  unlockAudio();
+  playSound("button");
   const name = (input.value || "").trim();
   if (name) {
-    myDraftName = name;
+    draftNames[seatIndex] = name;
     socket.emit("setName", name);
   }
   socket.emit("setRoute", routeKey);
 }
 
 // ===== ボタン =====
-startBtn.addEventListener("click", () => { clickSound("start"); socket.emit("start"); });
+startBtn.addEventListener("click", () => { unlockAudio(); playSound("button"); socket.emit("start"); });
 resetBtn.addEventListener("click", () => {
-  clickSound("reset");
+  unlockAudio();
+  playSound("button");
   if (confirm("ゲームをリセットして最初に戻しますか？")) socket.emit("reset");
 });
 
@@ -715,7 +737,7 @@ socket.on("joined", (id) => { myId = id; });
 socket.on("rejected", (msg) => { statusEl.textContent = msg; startBtn.disabled = true; canRoll = false; });
 
 socket.on("resetReady", () => {
-  myDraftName = "";
+  draftNames = ["", "", "", "", ""];
   lastShownSeq = 0; animating = false; fanfaredIndexes = {}; currentRotation = 0;
   canRoll = false;
   wheel.style.transition = "none"; wheel.style.transform = "rotate(0deg)";
@@ -725,6 +747,9 @@ socket.on("resetReady", () => {
   socket.disconnect();
   setTimeout(() => socket.connect(), 300);
 });
+
+// 自分の手番が回ってきた瞬間に1回だけ鳴らすための記録
+let lastMyTurn = false;
 
 socket.on("state", (state) => {
   routes = state.routes || routes;
@@ -756,6 +781,7 @@ function finalizeState(state) {
   if (state.finished && allMovesShown && !animating) {
     if (statusEl) statusEl.textContent = "🏁 全員ゴール（小樽）！ゲーム終了";
     startBtn.disabled = true; canRoll = false;
+    lastMyTurn = false;
     showResult(state);
     centerOnActivePlayer(true);
     return;
@@ -763,6 +789,7 @@ function finalizeState(state) {
   if (!state.started) {
     if (statusEl) statusEl.textContent = "名前を入れてルートを選び「ゲーム開始」を押してください";
     startBtn.disabled = false; canRoll = false;
+    lastMyTurn = false;
     resultEl.classList.remove("show");
     centerOnActivePlayer(false);
     return;
@@ -772,6 +799,12 @@ function finalizeState(state) {
   const myTurn = current && current.id === myId;
   if (statusEl) statusEl.textContent = "";
   canRoll = !!myTurn && !animating;
+
+  // 自分の手番が新たに回ってきた時だけ yourTurn を鳴らす
+  if (myTurn && !lastMyTurn && !animating) {
+    playSound("yourTurn");
+  }
+  lastMyTurn = !!myTurn;
 
   if (!animating) centerOnActivePlayer(true);
 }
