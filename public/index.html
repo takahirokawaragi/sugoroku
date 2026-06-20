@@ -1,15 +1,14 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.5
-     日付: 2026-06-19（金）14:26 JST
+     バージョン: v3.2
+     日付: 2026-06-12
      変更点:
-       1) 盤面を CSSグリッド→絶対座標キャンバスに変更
-          （#board を position:relative、各駅は left/top で配置）
-       2) 駅と駅の間を線路でつなぐ SVG レイヤー(#rails)を追加
-       3) 駅看板下のコマ置きスペースを標準で電車1台分の高さに固定
-       4) ルーレット＋操作パネルは従来どおり左上に固定
-          （盤面と重なってよい＝盤面側の左余白は取らない）
-     ※ server.js v3.5 / client.js v3.5 とセットで使用（PC前提）
+       1) ルーレット＋操作パネルを画面左上に固定(position:fixed)
+          → 盤面を縦横にスクロールしても常に見える
+       2) 自分の番のとき自分のコマへ盤面が自動追従（client.js側）
+       3) 盤面は「上=岩見沢／下=追分で左へ分岐→白石で合流」のシンプル版
+       4) 駅看板の見た目は v2.2 を維持（緑帯・黒漢字・水色窓）
+     ※ server.js v3.1 / client.js v3.1 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -28,6 +27,14 @@
       font-family: "Hiragino Kaku Gothic ProN", "メイリオ", sans-serif;
       background: #eef3f8;
       color: #222;
+      padding: 0 12px 24px;
+    }
+
+    h1 {
+      font-size: 18px;
+      text-align: center;
+      margin: 10px 0;
+      color: #1b3a5b;
     }
 
     button {
@@ -57,7 +64,7 @@
       background: #a3471f;
     }
 
-    /* ===== ルーレット＋操作：画面左上に固定（盤面と重なってOK）===== */
+    /* ===== ルーレット＋操作：画面左上に固定 ===== */
     .fixedPanel {
       position: fixed;
       top: 10px;
@@ -167,43 +174,28 @@
       margin: 2px;
     }
 
-    /* ===== タイトル（盤面スクロール領域の上に小さく）===== */
-    h1 {
-      font-size: 16px;
-      text-align: center;
-      margin: 8px 0;
-      color: #1b3a5b;
-    }
-
-    /* ===== 絶対座標キャンバス盤面 ===== */
+    /* ===== ループ盤面 ===== */
     .boardScroll {
       width: 100%;
-      height: calc(100vh - 40px);
-      overflow: auto;
-      /* 縦横スクロール */
-      padding: 0;
+      overflow-x: auto;
+      padding: 8px 0;
     }
 
     #board {
       position: relative;
-      /* 駅セルの絶対配置の基準 */
-      /* 幅・高さは client.js が駅座標から算出して設定する */
+      display: grid;
+      grid-auto-columns: 150px;
+      grid-auto-rows: minmax(118px, auto);
+      gap: 8px;
+      width: max-content;
+      margin: 0 auto;
+      /* 左上の固定パネルと重ならないよう、盤面に左の余白を確保 */
+      padding-left: 340px;
+      min-height: 70vh;
     }
 
-    /* 線路レイヤー（最背面） */
-    #rails {
-      position: absolute;
-      top: 0;
-      left: 0;
-      pointer-events: none;
-      z-index: 1;
-    }
-
-    /* ===== 駅セル（絶対配置・v2.2の見た目を踏襲）===== */
+    /* ===== 駅セル（v2.2の見た目）===== */
     .cell {
-      position: absolute;
-      /* left/top で配置 */
-      width: 84px;
       background: #f7f7f7;
       border: 1px solid #cfcfcf;
       border-radius: 6px;
@@ -211,8 +203,7 @@
       display: flex;
       flex-direction: column;
       align-items: stretch;
-      z-index: 2;
-      /* 線路より前面 */
+      position: relative;
     }
 
     .cell.start {
@@ -304,10 +295,8 @@
       white-space: nowrap;
     }
 
-    /* コマ置きスペース：標準で電車1台分の高さに固定 */
     .pawns {
-      height: 34px;
-      /* 電車1台分（trainの高さ26px＋余白）*/
+      min-height: 40px;
       margin-top: 5px;
       display: flex;
       flex-direction: row;
@@ -315,7 +304,6 @@
       gap: 4px;
       justify-content: center;
       align-items: flex-start;
-      overflow: visible;
     }
 
     .pawnWrap {
@@ -438,18 +426,15 @@
 
     /* 結果 */
     #result {
-      position: fixed;
-      right: 14px;
-      top: 14px;
-      width: 260px;
+      max-width: 920px;
+      margin: 14px auto;
       background: #fff;
       border-radius: 10px;
       padding: 12px;
       font-size: 15px;
       line-height: 1.9;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, .18);
+      box-shadow: 0 2px 6px rgba(0, 0, 0, .08);
       display: none;
-      z-index: 90;
     }
 
     #result.show {
@@ -465,6 +450,8 @@
 </head>
 
 <body>
+  <h1>みんなですごろく 〜栗山から小樽〜</h1>
+
   <!-- 画面左上に固定するパネル -->
   <div class="fixedPanel">
     <div class="nameArea" id="nameArea">
@@ -495,8 +482,7 @@
 
   <div class="boardScroll">
     <div id="board">
-      <svg id="rails"></svg>
-      <!-- 駅セルは client.js が left/top 指定で配置 -->
+      <!-- 駅セルは client.js が gridRow/gridColumn 指定で配置 -->
     </div>
   </div>
 
