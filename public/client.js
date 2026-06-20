@@ -1,22 +1,23 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.4.2
-   日付: 2026-06-20（土）22:24 JST
-   v3.4.2での変更点:
-     - 数字をカラー帯の上下中央に揃えた（帯幅は変更なし）
-       配置半径を outerR-outerR*0.22 → (outerR+innerR)/2 に変更
+   バージョン: v3.5.0
+   日付: 2026-06-20（土）23:14 JST
+   v3.5.0での変更点:
+     - 手番プレイヤーのコマを常に画面中央へ固定追従させる仕様に変更
+       （自分の番だけでなく、全員の画面で「今動いているコマ」が中央）
+       scrollIntoView をやめ、盤面ビューポート(.boardScroll)を
+       scrollTo で動かして対象セルを中央に置く方式へ
+     - 駅セル幅80%・看板の長方形化は index.html v3.5.0 側で対応
    --- 以下 過去履歴 ---
+   v3.4.2: 数字をカラー帯の上下中央に配置
    v3.4.1: 回すボタンをHTMLから削除・rollBtn依存を廃止（canRoll化）
    v3.4.0: 帯を70%幅・数字を中心寄せ・10同サイズ・本体クリックで回転
-   v3.3.5: 数字を外周寄せ・帯を細く
-   v3.3.4: カラー帯を太く・数字を大型化
-   v3.3.3: ルーレット全体を1.5倍に拡大（index.html は無改変）
-   v3.3.2: ルーレットを添付画像のデザインに忠実に再現
+   v3.3.x: ルーレットを画像デザインに忠実化・1.5倍化など
    v3.3:   共通区間の並び順バグ修正・computeLayout 見直し
    v3.2:   ルーレット画面固定・コマ追従
    v3.1:   両ルート同時表示（外周ループ）・コマ進行方向で自動反転
    v2.2:   iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js v3.5 / index.html v3.4.0 とセットで使うこと
+   ※ server.js v3.5 / index.html v3.5.0 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -45,6 +46,7 @@ let latestState = null;
 let canRoll = false;
 
 const boardEl = document.getElementById("board");
+const boardScrollEl = document.querySelector(".boardScroll"); // ★盤面ビューポート
 const statusEl = document.getElementById("status");
 const playersEl = document.getElementById("players");
 const resultEl = document.getElementById("result");
@@ -149,7 +151,7 @@ function drawWheel() {
   const outerR = r - 6;                  // カラー帯の外端
   const prevInnerR = r * 0.50;           // v3.3.5 のカラー帯内端
   const prevBandW = outerR - prevInnerR; // v3.3.5 のカラー帯幅
-  const bandW = prevBandW * 0.70;        // 帯幅は70%のまま（変更なし）
+  const bandW = prevBandW * 0.70;        // 帯幅は70%のまま
   const innerR = outerR - bandW;         // 帯の内端
   const lineGray = "#9aa1a8";
 
@@ -171,7 +173,7 @@ function drawWheel() {
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
     ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(r * 0.30) + "px sans-serif";
     ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    const textR = (outerR + innerR) / 2; // ★帯の上下中央
+    const textR = (outerR + innerR) / 2; // 帯の上下中央
     ctx.rotate(Math.PI / 2);
     ctx.strokeText(label, 0, -textR);
     ctx.fillText(label, 0, -textR);
@@ -198,7 +200,6 @@ function drawWheel() {
   }
 
   // --- 十角形リング（中が白、灰色の輪郭）---
-  // 頂点が各セグメントの境目に来る向き（10頂点）
   ctx.beginPath();
   for (let k = 0; k < 10; k++) {
     const ang = k * seg - Math.PI / 2; // セグメント境界の角度
@@ -254,9 +255,6 @@ function stationOf(routeKey, i) {
 
 // =========================================================
 //  外周ループのレイアウト座標を計算
-//  - 上行(UP_ROW): 岩見沢ルートの分岐を右→左
-//  - 下行(DOWN_ROW): 追分ルートの分岐を右→左
-//  - 最上段(TOP_ROW): 共通区間を 白石(右)→小樽(左) で並べる
 // =========================================================
 const TOP_ROW = 1;
 const UP_ROW = 3;
@@ -270,23 +268,18 @@ function computeLayout() {
   const branchMax = Math.max(csI, csO); // 長いほうの分岐に合わせる
   const commonLen = routes.iwamizawa.length - csI; // 共通区間の駅数（白石〜小樽）
 
-  // 全体がプラス座標に収まるよう右端列を十分大きく取る
   const RIGHT_COL = branchMax + commonLen + 1;
 
-  // --- 分岐：岩見沢（上行）栗山(右)→厚別(左) ---
   for (let i = 0; i < csI; i++) {
     result.iwamizawa.push({ pos: i, row: UP_ROW, col: RIGHT_COL - i, dir: "L" });
   }
-  // --- 分岐：追分（下行）栗山(右)→平和(左) ---
   for (let i = 0; i < csO; i++) {
     result.oiwake.push({ pos: i, row: DOWN_ROW, col: RIGHT_COL - i, dir: "L" });
   }
 
-  // --- 共通区間（最上段）白石(右)→小樽(左) ---
-  // 白石の列 = 分岐左端のさらに1つ左
   const whiteishiCol = RIGHT_COL - branchMax - 1;
   for (let j = 0; j < commonLen; j++) {
-    const col = whiteishiCol - j; // j=0:白石(右) … 末尾:小樽(左)
+    const col = whiteishiCol - j;
     result.iwamizawa.push({ pos: csI + j, row: TOP_ROW, col: col, dir: "L", common: true });
     result.oiwake.push({ pos: csO + j, row: TOP_ROW, col: col, dir: "L", common: true });
   }
@@ -412,21 +405,48 @@ function renderBoard(positions, override) {
   });
 }
 
-function scrollToMyPawn(pos, rk) {
+// ===== 指定セルを盤面ビューポートの中央へ（背景が動く）=====
+function centerOnCell(pos, rk, smooth) {
   const cell = cellMap[rk + ":" + pos];
-  if (cell) cell.scrollIntoView({ behavior: "smooth", block: "center", inline: "center" });
+  if (!cell || !boardScrollEl) return;
+  // セルの中心を、ビューポートの中央に合わせる scroll 量を計算
+  const targetLeft = cell.offsetLeft + cell.offsetWidth / 2 - boardScrollEl.clientWidth / 2;
+  const targetTop  = cell.offsetTop + cell.offsetHeight / 2 - boardScrollEl.clientHeight / 2;
+  boardScrollEl.scrollTo({
+    left: targetLeft,
+    top: targetTop,
+    behavior: smooth ? "smooth" : "auto",
+  });
+}
+
+// 今の手番（または直近に動いた）プレイヤーを中央に置く
+function centerOnActivePlayer(smooth) {
+  if (!latestState) return;
+  let idx = -1;
+  if (latestState.started && !latestState.finished &&
+      typeof latestState.currentTurn === "number") {
+    idx = latestState.currentTurn; // 手番のプレイヤー
+  } else {
+    // 開始前・終了後は自分を中央に（いなければ先頭）
+    idx = latestState.players.findIndex((p) => p.id === myId);
+    if (idx < 0) idx = 0;
+  }
+  const p = latestState.players[idx];
+  if (!p) return;
+  const rk = p.routeKey || "oiwake";
+  centerOnCell(p.pos, rk, smooth);
 }
 
 function animateSteps(playerIndex, from, to, onDone) {
   let current = from;
-  const me = latestState.players.findIndex((p) => p.id === myId);
   const rk = latestState.players[playerIndex].routeKey || "oiwake";
   const stepOnce = () => {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
     renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
     stepSound();
-    if (playerIndex === me) scrollToMyPawn(current, rk);
+    // 動いている手番プレイヤーを常に中央へ（全員の画面で）
+    centerOnCell(current, rk, true);
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
     setTimeout(stepOnce, 350);
   };
@@ -445,6 +465,8 @@ function processNextMove() {
   const rk = latestState.players[next.index].routeKey || "oiwake";
   statusEl.textContent = next.name + " がルーレットを回しています...";
   renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
+  // 回す前に、動くプレイヤーを中央へ寄せておく
+  centerOnCell(next.from, rk, true);
 
   spinTo(next.dice, () => {
     const st = stationOf(rk, next.to);
@@ -463,7 +485,6 @@ function processNextMove() {
 }
 
 // ===== ルーレットを回す（本体クリック）=====
-// canRoll が true のときだけ回せる（旧 rollBtn の役割）。
 function tryRoll() {
   if (!canRoll) return;
   unlockAudio();
@@ -540,12 +561,14 @@ function finalizeState(state) {
     statusEl.textContent = "🏁 全員ゴール（小樽）！ゲーム終了";
     startBtn.disabled = true; canRoll = false;
     showResult(state);
+    centerOnActivePlayer(true);
     return;
   }
   if (!state.started) {
     statusEl.textContent = "ルートと名前を決めて「ゲーム開始」を押してください";
     startBtn.disabled = false; canRoll = false;
     resultEl.classList.remove("show");
+    centerOnActivePlayer(false);
     return;
   }
   startBtn.disabled = true;
@@ -555,11 +578,8 @@ function finalizeState(state) {
     : (current ? current.name + " の番です..." : "");
   canRoll = !!myTurn && !animating;
 
-  const meIdx = state.players.findIndex((p) => p.id === myId);
-  if (meIdx >= 0) {
-    const rk = state.players[meIdx].routeKey || "oiwake";
-    scrollToMyPawn(state.players[meIdx].pos, rk);
-  }
+  // 手番のプレイヤーを中央へ（全員の画面で）
+  if (!animating) centerOnActivePlayer(true);
 }
 
 function showResult(state) {

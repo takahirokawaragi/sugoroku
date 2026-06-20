@@ -1,18 +1,21 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.4.0
-     日付: 2026-06-20（土）22:09 JST
-     v3.4.0での変更点:
-       - 「ルーレットを回す」ボタンを廃止（ルーレット本体クリックで回す）
-         → HTMLからボタン要素を削除
+     バージョン: v3.5.0
+     日付: 2026-06-20（土）23:14 JST
+     v3.5.0での変更点:
+       - 駅セルの横幅を80%に縮小（150px→120px）。駅名フォントは据え置き
+       - 駅看板(.stSign)と緑帯(.stBand)の角丸を廃止し長方形化
+         緑帯は青枠の内側いっぱい（左右・下端まで密着）に拡張
+       - 盤面を縦横スクロール可能なビューポート化し、周囲に余白を確保
+         （手番プレイヤーのコマを画面中央に固定追従させるため）
      --- 以下 過去履歴 ---
+     v3.4.0: 「ルーレットを回す」ボタンを廃止（本体クリックで回す）
      v3.2:
        1) ルーレット＋操作パネルを画面左上に固定(position:fixed)
-          → 盤面を縦横にスクロールしても常に見える
-       2) 自分の番のとき自分のコマへ盤面が自動追従（client.js側）
+       2) 自分の番のとき自分のコマへ盤面が自動追従
        3) 盤面は「上=岩見沢／下=追分で左へ分岐→白石で合流」のシンプル版
        4) 駅看板の見た目は v2.2 を維持（緑帯・黒漢字・水色窓）
-     ※ server.js v3.5 / client.js v3.4.0 とセットで使用（PC前提）
+     ※ server.js v3.5 / client.js v3.5.0 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -178,27 +181,31 @@
       margin: 2px;
     }
 
-    /* ===== ループ盤面 ===== */
+    /* ===== ループ盤面（縦横スクロール可能なビューポート）===== */
     .boardScroll {
       width: 100%;
-      overflow-x: auto;
-      padding: 8px 0;
+      height: 88vh;
+      /* 画面いっぱいの高さを確保 */
+      overflow: auto;
+      /* 縦横スクロール */
+      padding: 0;
+      scroll-behavior: smooth;
+      /* 追従をなめらかに */
     }
 
     #board {
       position: relative;
       display: grid;
-      grid-auto-columns: 150px;
+      grid-auto-columns: 120px;
+      /* ★駅セル幅80%（150→120） */
       grid-auto-rows: minmax(118px, auto);
       gap: 8px;
       width: max-content;
-      margin: 0 auto;
-      /* 左上の固定パネルと重ならないよう、盤面に左の余白を確保 */
-      padding-left: 340px;
-      min-height: 70vh;
+      /* どの駅でも画面中央に来られるよう、盤面の周囲に大きめ余白 */
+      padding: 50vh 50vw;
     }
 
-    /* ===== 駅セル（v2.2の見た目）===== */
+    /* ===== 駅セル（看板の角丸を廃止・長方形化）===== */
     .cell {
       background: #f7f7f7;
       border: 1px solid #cfcfcf;
@@ -234,10 +241,11 @@
       background: #d4a017;
     }
 
+    /* 青枠：角丸なしの長方形。緑帯を内側いっぱいに収めるため overflow:hidden */
     .stSign {
       background: #fff;
-      border: 2px solid #2a6db0;
-      border-radius: 5px;
+      border: 3px solid #1a7fc4;
+      border-radius: 0;
       padding: 5px 4px 0;
       display: flex;
       flex-direction: column;
@@ -265,11 +273,13 @@
       word-break: break-all;
     }
 
+    /* 緑帯：角丸なし。左右・下端を青枠の内側いっぱいまで広げる（負マージンで padding を打ち消す） */
     .stBand {
-      width: 100%;
+      width: auto;
       background: #8cc63f;
-      border-radius: 3px;
-      margin-top: auto;
+      border-radius: 0;
+      margin: auto -4px 0;
+      /* 左右の padding(4px) を相殺して内側いっぱいに */
       padding: 2px 2px 3px;
     }
 
