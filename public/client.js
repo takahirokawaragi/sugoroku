@@ -1,25 +1,23 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.5.2
-   日付: 2026-06-20（土）23:42 JST
-   v3.5.2での変更点:
-     - 721系コマを元画像寄りに作り直し（makeTrain を更新）
-       前面ガラス・行先表示・ドア3か所・客窓・クーラー・台車3基
-     - プレイヤー識別の赤丸/青丸(colorDot)を削除
-       車体の横帯2本(lineThin/lineThick)をプレイヤー色で塗り分け
-     - 長い名前を省略せず全表示（CSSは index.html v3.5.2 側）
+   バージョン: v3.6.0
+   日付: 2026-06-21（日）00:05 JST
+   v3.6.0での変更点:
+     - 盤面を「背景路線図(SVG)＋駅マス絶対配置」方式に全面変更
+       ・STATION_COORDS で各駅(routeKey,pos)にピクセル座標を付与
+       ・computeLayout/格子配置を廃止、renderBoard を座標方式に
+       ・centerOnCell を座標方式に対応（手番プレイヤー中央追従は維持）
+       ・SVG背景(buildRouteSVG)を自作（路線図風・著作権フリー）
+     - 看板デザイン・コマ(721系)・ルーレットは v3.5.2 を維持
    --- 以下 過去履歴 ---
-   v3.5.1: 721系コマ精密化・緑帯を青枠内側に密着
+   v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
+   v3.5.1: 緑帯を青枠内側に密着・721系コマ精密化
    v3.5.0: 手番プレイヤーを画面中央固定追従・看板長方形化・駅セル80%幅
-   v3.4.2: 数字をカラー帯の上下中央に配置
-   v3.4.1: 回すボタンをHTMLから削除・rollBtn依存を廃止（canRoll化）
-   v3.4.0: 帯を70%幅・数字を中心寄せ・10同サイズ・本体クリックで回転
-   v3.3.x: ルーレットを画像デザインに忠実化・1.5倍化など
+   v3.4.x: 回すボタン廃止・本体クリック回転・ルーレット調整
    v3.3:   共通区間の並び順バグ修正・computeLayout 見直し
    v3.2:   ルーレット画面固定・コマ追従
-   v3.1:   両ルート同時表示（外周ループ）・コマ進行方向で自動反転
-   v2.2:   iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js v3.5 / index.html v3.5.2 とセットで使うこと
+   v3.1:   両ルート同時表示・コマ進行方向で自動反転
+   ※ server.js v3.5 / index.html v3.6.0 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -61,6 +59,88 @@ const routeOiwakeBtn = document.getElementById("routeOiwakeBtn");
 const routeIwamizawaBtn = document.getElementById("routeIwamizawaBtn");
 const routeLabel = document.getElementById("routeLabel");
 const routeArea = document.getElementById("routeArea");
+
+// =========================================================
+//  駅座標テーブル（背景路線図方式）
+//  pos は server.js の配列インデックスと一致
+//  分岐区間はルートごと、共通区間(白石〜小樽)は共有座標
+// =========================================================
+const BOARD_W = 4400;
+const BOARD_H = 1560;
+
+// --- 岩見沢経由 分岐（pos 0〜13: 栗山〜厚別）---
+const COORD_IWAMIZAWA_BRANCH = [
+  { x: 3600, y: 820 }, // 0 栗山
+  { x: 3690, y: 650 }, // 1 栗丘
+  { x: 3770, y: 490 }, // 2 栗沢
+  { x: 3830, y: 350 }, // 3 志文
+  { x: 3870, y: 210 }, // 4 岩見沢
+  { x: 3620, y: 210 }, // 5 上幌向
+  { x: 3380, y: 210 }, // 6 幌向
+  { x: 3140, y: 210 }, // 7 豊幌
+  { x: 2900, y: 210 }, // 8 江別
+  { x: 2660, y: 210 }, // 9 高砂
+  { x: 2420, y: 210 }, // 10 野幌
+  { x: 2180, y: 210 }, // 11 大麻
+  { x: 1940, y: 210 }, // 12 森林公園
+  { x: 1700, y: 210 }, // 13 厚別
+];
+
+// --- 追分経由 分岐（pos 0〜20: 栗山〜平和）---
+const COORD_OIWAKE_BRANCH = [
+  { x: 3600, y: 820 },  // 0 栗山
+  { x: 3760, y: 980 },  // 1 由仁
+  { x: 3860, y: 1120 }, // 2 古山
+  { x: 3900, y: 1260 }, // 3 三川
+  { x: 3900, y: 1420 }, // 4 追分
+  { x: 3660, y: 1420 }, // 5 安平
+  { x: 3420, y: 1420 }, // 6 早来
+  { x: 3180, y: 1420 }, // 7 遠浅
+  { x: 2940, y: 1420 }, // 8 沼ノ端
+  { x: 2700, y: 1420 }, // 9 植苗
+  { x: 2460, y: 1420 }, // 10 南千歳
+  { x: 2460, y: 1260 }, // 11 千歳
+  { x: 2460, y: 1100 }, // 12 長都
+  { x: 2220, y: 1100 }, // 13 サッポロビール庭園
+  { x: 1980, y: 1100 }, // 14 恵庭
+  { x: 1740, y: 1100 }, // 15 恵み野
+  { x: 1500, y: 1100 }, // 16 島松
+  { x: 1260, y: 1100 }, // 17 北広島
+  { x: 1260, y: 930 },  // 18 上野幌
+  { x: 1260, y: 760 },  // 19 新札幌
+  { x: 1260, y: 590 },  // 20 平和
+];
+
+// --- 共通区間（白石〜小樽: 左上がり一直線）---
+// COMMON は17駅。白石を右に、小樽を左上に等間隔で並べ、1駅ごとに少し上げる
+const COMMON_COUNT = 17;
+const COMMON_START_X = 1480;
+const COMMON_END_X = 160;
+const COMMON_START_Y = 470;
+const COMMON_END_Y = 150;
+const COORD_COMMON = (function () {
+  const arr = [];
+  for (let i = 0; i < COMMON_COUNT; i++) {
+    const t = i / (COMMON_COUNT - 1);
+    arr.push({
+      x: Math.round(COMMON_START_X + (COMMON_END_X - COMMON_START_X) * t),
+      y: Math.round(COMMON_START_Y + (COMMON_END_Y - COMMON_START_Y) * t),
+    });
+  }
+  return arr;
+})();
+
+// pos(0始まり) と routeKey から座標を返す
+function coordOf(routeKey, pos) {
+  const cs = commonStart[routeKey];
+  if (typeof cs === "number" && pos >= cs) {
+    return COORD_COMMON[pos - cs] || COORD_COMMON[COORD_COMMON.length - 1];
+  }
+  if (routeKey === "iwamizawa") {
+    return COORD_IWAMIZAWA_BRANCH[pos] || COORD_IWAMIZAWA_BRANCH[0];
+  }
+  return COORD_OIWAKE_BRANCH[pos] || COORD_OIWAKE_BRANCH[0];
+}
 
 // ===== ルーレットを 1.5倍化（index.html は無改変）=====
 (function enlargeWheel() {
@@ -233,39 +313,6 @@ function stationOf(routeKey, i) {
   return arr[i] || { kanji: String(i), kana: "", romaji: "" };
 }
 
-// =========================================================
-//  外周ループのレイアウト座標を計算
-// =========================================================
-const TOP_ROW = 1;
-const UP_ROW = 3;
-const MID_ROW = 5;
-const DOWN_ROW = 7;
-
-function computeLayout() {
-  const result = { oiwake: [], iwamizawa: [] };
-  const csI = commonStart.iwamizawa;
-  const csO = commonStart.oiwake;
-  const branchMax = Math.max(csI, csO);
-  const commonLen = routes.iwamizawa.length - csI;
-
-  const RIGHT_COL = branchMax + commonLen + 1;
-
-  for (let i = 0; i < csI; i++) {
-    result.iwamizawa.push({ pos: i, row: UP_ROW, col: RIGHT_COL - i, dir: "L" });
-  }
-  for (let i = 0; i < csO; i++) {
-    result.oiwake.push({ pos: i, row: DOWN_ROW, col: RIGHT_COL - i, dir: "L" });
-  }
-
-  const whiteishiCol = RIGHT_COL - branchMax - 1;
-  for (let j = 0; j < commonLen; j++) {
-    const col = whiteishiCol - j;
-    result.iwamizawa.push({ pos: csI + j, row: TOP_ROW, col: col, dir: "L", common: true });
-    result.oiwake.push({ pos: csO + j, row: TOP_ROW, col: col, dir: "L", common: true });
-  }
-  return result;
-}
-
 function positionsUpToShown() {
   const pos = {};
   latestState.players.forEach((p, i) => { pos[i] = 0; });
@@ -274,51 +321,53 @@ function positionsUpToShown() {
   return pos;
 }
 
-// ===== 盤面描画 =====
-let layout = null;
-let cellMap = {};
-
-function buildSign(routeKey, pos) {
-  const sign = document.createElement("div");
-  sign.className = "stSign";
-  const st = stationOf(routeKey, pos);
-  const kanji = document.createElement("div");
-  kanji.className = "stKanji"; kanji.textContent = st.kanji;
-  const kana = document.createElement("div");
-  kana.className = "stKana"; kana.textContent = st.kana;
-  const band = document.createElement("div");
-  band.className = "stBand";
-  const romaji = document.createElement("div");
-  romaji.className = "stRomaji"; romaji.textContent = st.romaji;
-  band.appendChild(romaji);
-  sign.appendChild(kanji); sign.appendChild(kana); sign.appendChild(band);
-  return sign;
+// =========================================================
+//  背景路線図 SVG を生成（自作・著作権フリー）
+// =========================================================
+function lineThrough(coords, color, width) {
+  const pts = coords.map((c) => `${c.x},${c.y}`).join(" ");
+  return `<polyline points="${pts}" fill="none" stroke="${color}" stroke-width="${width}" stroke-linecap="round" stroke-linejoin="round" />`;
 }
 
-function makeCell(routeKey, item) {
-  const cell = document.createElement("div");
-  cell.className = "cell";
-  cell.style.gridRow = String(item.row);
-  cell.style.gridColumn = String(item.col);
-  const st = stationOf(routeKey, item.pos);
-  if (item.pos === 0) cell.classList.add("start");
-  const goal = goals[routeKey];
-  const isGoal = item.common && item.pos === goal;
-  if (isGoal) cell.classList.add("goal");
-  if (st.kanji.length >= 6) cell.classList.add("longName");
+function buildRouteSVG() {
+  const COL_IWA = "#d35400";   // 岩見沢経由（室蘭本線・函館本線）橙系
+  const COL_OIW = "#16a085";   // 追分経由（千歳線）緑系
+  const COL_COM = "#34495e";   // 共通区間（函館本線）濃灰
 
-  cell.appendChild(buildSign(routeKey, item.pos));
+  // 岩見沢経由の線：分岐→共通先頭(白石)へ
+  const iwaPath = COORD_IWAMIZAWA_BRANCH.concat([COORD_COMMON[0]]);
+  // 追分経由の線：分岐→共通先頭(白石)へ
+  const oiwPath = COORD_OIWAKE_BRANCH.concat([COORD_COMMON[0]]);
+  // 共通区間の線
+  const comPath = COORD_COMMON;
 
-  if (item.pos === 0) {
-    const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "START"; cell.appendChild(tag);
-  } else if (isGoal) {
-    const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "GOAL"; cell.appendChild(tag);
+  let svg = `<svg id="routeSvg" width="${BOARD_W}" height="${BOARD_H}" viewBox="0 0 ${BOARD_W} ${BOARD_H}" xmlns="http://www.w3.org/2000/svg">`;
+  // 背景
+  svg += `<rect x="0" y="0" width="${BOARD_W}" height="${BOARD_H}" fill="#fbf7ee" />`;
+  // 路線（太い色帯）
+  svg += lineThrough(iwaPath, COL_IWA, 14);
+  svg += lineThrough(oiwPath, COL_OIW, 14);
+  svg += lineThrough(comPath, COL_COM, 16);
+
+  // 各駅の丸印（背景側）
+  function dots(coords, routeKey, isCommonArr) {
+    let s = "";
+    coords.forEach((c) => {
+      s += `<circle cx="${c.x}" cy="${c.y}" r="9" fill="#fff" stroke="#555" stroke-width="3" />`;
+    });
+    return s;
   }
+  svg += dots(COORD_IWAMIZAWA_BRANCH);
+  svg += dots(COORD_OIWAKE_BRANCH);
+  svg += dots(COORD_COMMON);
 
-  const pawns = document.createElement("div");
-  pawns.className = "pawns";
-  cell.appendChild(pawns);
-  return cell;
+  // ルート名ラベル（路線図風）
+  svg += `<text x="3760" y="120" font-size="34" fill="${COL_IWA}" font-weight="bold">岩見沢経由</text>`;
+  svg += `<text x="3500" y="1500" font-size="34" fill="${COL_OIW}" font-weight="bold">追分経由</text>`;
+  svg += `<text x="${COMMON_END_X + 40}" y="${COMMON_END_Y - 40}" font-size="34" fill="${COL_COM}" font-weight="bold">函館本線</text>`;
+
+  svg += `</svg>`;
+  return svg;
 }
 
 // ===== 721系コマ（元画像寄り・横帯でプレイヤー識別）=====
@@ -363,46 +412,105 @@ function makeTrain(colorIndex, name, dir) {
   return wrap;
 }
 
-function renderBoard(positions, override) {
-  boardEl.innerHTML = "";
-  cellMap = {};
-  layout = computeLayout();
+// ===== 盤面描画（座標方式）=====
+let cellMap = {};   // key "rk:pos" -> 駅セル要素
+let coordCellDrawn = {}; // 共通区間の重複描画防止
 
-  const drawnCommon = {};
+function buildSign(routeKey, pos) {
+  const sign = document.createElement("div");
+  sign.className = "stSign";
+  const st = stationOf(routeKey, pos);
+  const kanji = document.createElement("div");
+  kanji.className = "stKanji"; kanji.textContent = st.kanji;
+  const kana = document.createElement("div");
+  kana.className = "stKana"; kana.textContent = st.kana;
+  const band = document.createElement("div");
+  band.className = "stBand";
+  const romaji = document.createElement("div");
+  romaji.className = "stRomaji"; romaji.textContent = st.romaji;
+  band.appendChild(romaji);
+  sign.appendChild(kanji); sign.appendChild(kana); sign.appendChild(band);
+  return sign;
+}
+
+function makeCell(routeKey, pos) {
+  const c = coordOf(routeKey, pos);
+  const cell = document.createElement("div");
+  cell.className = "cell";
+  cell.style.left = c.x + "px";
+  cell.style.top = c.y + "px";
+
+  const st = stationOf(routeKey, pos);
+  if (pos === 0) cell.classList.add("start");
+  const goal = goals[routeKey];
+  const isGoal = pos === goal;
+  if (isGoal) cell.classList.add("goal");
+  if (st.kanji.length >= 6) cell.classList.add("longName");
+
+  cell.appendChild(buildSign(routeKey, pos));
+
+  if (pos === 0) {
+    const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "START"; cell.appendChild(tag);
+  } else if (isGoal) {
+    const tag = document.createElement("div"); tag.className = "stTag"; tag.textContent = "GOAL"; cell.appendChild(tag);
+  }
+
+  const pawns = document.createElement("div");
+  pawns.className = "pawns";
+  cell.appendChild(pawns);
+  return cell;
+}
+
+function renderBoard(positions, override) {
+  // 盤面ステージを初期化
+  boardEl.innerHTML = "";
+  boardEl.style.width = BOARD_W + "px";
+  boardEl.style.height = BOARD_H + "px";
+  cellMap = {};
+  coordCellDrawn = {};
+
+  // 背景SVG
+  const bg = document.createElement("div");
+  bg.className = "routeBg";
+  bg.innerHTML = buildRouteSVG();
+  boardEl.appendChild(bg);
+
+  // 駅セルを配置（共通区間は1回だけ実体を作り、両ルートから参照）
   ["iwamizawa", "oiwake"].forEach((rk) => {
-    layout[rk].forEach((item) => {
-      if (item.common) {
-        const key = "C:" + item.col;
-        if (drawnCommon[key]) {
-          cellMap[rk + ":" + item.pos] = drawnCommon[key];
-          return;
+    const arr = routes[rk] || [];
+    const cs = commonStart[rk];
+    for (let pos = 0; pos < arr.length; pos++) {
+      if (typeof cs === "number" && pos >= cs) {
+        const ckey = "C:" + (pos - cs);
+        if (coordCellDrawn[ckey]) {
+          cellMap[rk + ":" + pos] = coordCellDrawn[ckey];
+          continue;
         }
-        const cell = makeCell(rk, item);
+        const cell = makeCell(rk, pos);
         boardEl.appendChild(cell);
-        drawnCommon[key] = cell;
-        cellMap[rk + ":" + item.pos] = cell;
+        coordCellDrawn[ckey] = cell;
+        cellMap[rk + ":" + pos] = cell;
       } else {
-        const cell = makeCell(rk, item);
+        const cell = makeCell(rk, pos);
         boardEl.appendChild(cell);
-        cellMap[rk + ":" + item.pos] = cell;
+        cellMap[rk + ":" + pos] = cell;
       }
-    });
+    }
   });
 
+  // コマを配置
   latestState.players.forEach((p, idx) => {
     let pos = positions[idx];
     if (override && override.idx === idx) pos = override.pos;
     const rk = p.routeKey || "oiwake";
-    const item = layout[rk].find((it) => it.pos === pos);
-    const dir = item ? item.dir : "L";
     const cell = cellMap[rk + ":" + pos];
     if (!cell) return;
     const pawnsEl = cell.querySelector(".pawns");
-    if (pawnsEl) pawnsEl.appendChild(makeTrain(idx, p.name, dir));
+    if (pawnsEl) pawnsEl.appendChild(makeTrain(idx, p.name, "L"));
   });
 }
 
-// ===== 指定セルを盤面ビューポートの中央へ（背景が動く）=====
+// ===== 指定駅(rk,pos)を盤面ビューポート中央へ（背景が動く）=====
 function centerOnCell(pos, rk, smooth) {
   const cell = cellMap[rk + ":" + pos];
   if (!cell || !boardScrollEl) return;

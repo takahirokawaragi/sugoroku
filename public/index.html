@@ -1,20 +1,19 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.5.2
-     日付: 2026-06-20（土）23:42 JST
-     v3.5.2での変更点:
-       - 721系コマを元画像寄りに作り直し（横幅116pxに拡大）
-         前面ガラス・行先表示・ドア3か所・客窓・屋根上クーラー・
-         床下機器・台車3基を描画。.pawnWrap も拡大
-       - プレイヤー識別の赤丸/青丸(.colorDot)を削除
-         車体の横帯2本(.lineThin/.lineThick)をプレイヤー色(--bandColor)で塗る
-       - 長い名前を省略せず全表示（.pawnName の幅制限・省略を解除）
+     バージョン: v3.6.0
+     日付: 2026-06-21（日）00:05 JST
+     v3.6.0での変更点:
+       - 盤面を「背景路線図(SVG)＋駅マス絶対配置」方式に変更
+         ・#board を position:relative の広いステージにし、
+           各駅セル(.cell)を left/top で絶対配置
+         ・背景 .routeBg に client.js が生成したSVGを敷く
+         ・格子(grid)レイアウトの指定を廃止
+       - 看板・721系コマ・ルーレットの見た目は v3.5.2 を維持
      --- 以下 過去履歴 ---
-     v3.5.1: 緑帯を青枠内側に密着・721系コマ精密化
+     v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
      v3.5.0: 駅セル80%幅・看板長方形化・手番プレイヤーを画面中央固定追従
      v3.4.0: 「ルーレットを回す」ボタンを廃止（本体クリックで回す）
-     v3.2:   ルーレット固定・コマ追従・看板の見た目(緑帯・水色窓)
-     ※ server.js v3.5 / client.js v3.5.2 とセットで使用（PC前提）
+     ※ server.js v3.5 / client.js v3.6.0 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -180,7 +179,7 @@
       margin: 2px;
     }
 
-    /* ===== ループ盤面（縦横スクロール可能なビューポート）===== */
+    /* ===== 盤面ビューポート（縦横スクロール）===== */
     .boardScroll {
       width: 100%;
       height: 88vh;
@@ -189,36 +188,49 @@
       scroll-behavior: smooth;
     }
 
+    /* 盤面ステージ：広い座標空間。各駅は絶対配置 */
     #board {
       position: relative;
-      display: grid;
-      grid-auto-columns: 120px;
-      /* 駅セル幅80%（150→120） */
-      grid-auto-rows: minmax(118px, auto);
-      gap: 8px;
-      width: max-content;
-      padding: 50vh 50vw;
-      /* どの駅も中央に来られる余白 */
+      width: 4400px;
+      height: 1560px;
     }
 
-    /* ===== 駅セル（看板は角丸なしの長方形）===== */
+    /* 背景の路線図SVG */
+    .routeBg {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 100%;
+      height: 100%;
+      z-index: 0;
+      pointer-events: none;
+    }
+
+    .routeBg svg {
+      display: block;
+    }
+
+    /* ===== 駅セル（絶対配置・看板は角丸なしの長方形）===== */
     .cell {
-      background: #f7f7f7;
+      position: absolute;
+      transform: translate(-50%, -50%);
+      width: 130px;
+      background: rgba(247, 247, 247, 0.96);
       border: 1px solid #cfcfcf;
       border-radius: 6px;
       padding: 6px 5px 5px;
       display: flex;
       flex-direction: column;
       align-items: stretch;
-      position: relative;
+      z-index: 2;
     }
 
     .cell.start {
-      background: #fff1ea;
+      background: rgba(255, 241, 234, 0.97);
     }
 
     .cell.goal {
-      background: #fff8e2;
+      background: rgba(255, 248, 226, 0.97);
     }
 
     .stTag {
@@ -244,7 +256,6 @@
       border: 3px solid #1a7fc4;
       border-radius: 0;
       padding: 5px 4px 22px;
-      /* 下に緑帯ぶんの余白を確保 */
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -271,7 +282,7 @@
       word-break: break-all;
     }
 
-    /* 緑帯：青枠の内側いっぱい（左右・下端まで密着）に絶対配置 */
+    /* 緑帯：青枠の内側いっぱい（左右・下端まで密着） */
     .stBand {
       position: absolute;
       left: 0;
@@ -348,7 +359,6 @@
       transform: scaleX(-1);
     }
 
-    /* 車体：銀色のグラデーション */
     .train .trainBody {
       position: relative;
       width: 116px;
@@ -359,7 +369,6 @@
       overflow: hidden;
     }
 
-    /* 屋根の濃いライン＋クーラー */
     .train .trainRoof {
       position: absolute;
       top: 0;
@@ -391,7 +400,6 @@
       left: 80px;
     }
 
-    /* 前面（黒い大きなガラス）：右端＝進行方向先頭 */
     .train .trainFront {
       position: absolute;
       top: 4px;
@@ -404,7 +412,6 @@
       z-index: 3;
     }
 
-    /* 行先表示（水色の小窓） */
     .train .trainDest {
       position: absolute;
       top: 5px;
@@ -417,7 +424,6 @@
       z-index: 3;
     }
 
-    /* 上部の細い緑ライン → プレイヤー色 */
     .train .lineThin {
       position: absolute;
       top: 10px;
@@ -427,7 +433,6 @@
       background: var(--bandColor, #2ecc71);
     }
 
-    /* 窓下の太い緑帯 → プレイヤー色 */
     .train .lineThick {
       position: absolute;
       bottom: 5px;
@@ -437,7 +442,6 @@
       background: var(--bandColor, #2ecc71);
     }
 
-    /* 窓列（乗務員窓・ドア・客窓） */
     .train .trainWindows {
       position: absolute;
       top: 4.5px;
@@ -473,7 +477,6 @@
       border-radius: 1px 3px 1px 1px;
     }
 
-    /* 床下：スカート＋機器箱 */
     .train .trainUnder {
       position: relative;
       width: 110px;
@@ -501,7 +504,6 @@
       border-radius: 0 0 1px 1px;
     }
 
-    /* 台車3基 */
     .train .trainWheels {
       position: absolute;
       bottom: 0;
@@ -594,7 +596,7 @@
 
   <div class="boardScroll">
     <div id="board">
-      <!-- 駅セルは client.js が gridRow/gridColumn 指定で配置 -->
+      <!-- 背景SVGと駅セルは client.js が生成・絶対配置 -->
     </div>
   </div>
 
