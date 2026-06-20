@@ -1,23 +1,21 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.6.0
-   日付: 2026-06-21（日）00:05 JST
-   v3.6.0での変更点:
-     - 盤面を「背景路線図(SVG)＋駅マス絶対配置」方式に全面変更
-       ・STATION_COORDS で各駅(routeKey,pos)にピクセル座標を付与
-       ・computeLayout/格子配置を廃止、renderBoard を座標方式に
-       ・centerOnCell を座標方式に対応（手番プレイヤー中央追従は維持）
-       ・SVG背景(buildRouteSVG)を自作（路線図風・著作権フリー）
-     - 看板デザイン・コマ(721系)・ルーレットは v3.5.2 を維持
+   バージョン: v3.6.1
+   日付: 2026-06-21（日）00:40 JST
+   v3.6.1での変更点:
+     - 駅座標を広域路線図に合わせて全面再設計
+       ・共通区間の駅間を広げ重なり解消（約260px間隔・左上がり）
+       ・岩見沢経由：栗山→上へ岩見沢→緩く左下→下りながら白石へ
+       ・追分経由：追分→下へ安平→左下へ早来/遠浅/沼ノ端→
+         右上に植苗→上に南千歳→左上へ→北広島から上へ白石
+     - ルート名ラベルを線・駅に重ならない位置へ移動
+     - 盤面の高さを拡大（BOARD_H 2200）
    --- 以下 過去履歴 ---
+   v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
    v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
-   v3.5.1: 緑帯を青枠内側に密着・721系コマ精密化
-   v3.5.0: 手番プレイヤーを画面中央固定追従・看板長方形化・駅セル80%幅
-   v3.4.x: 回すボタン廃止・本体クリック回転・ルーレット調整
-   v3.3:   共通区間の並び順バグ修正・computeLayout 見直し
-   v3.2:   ルーレット画面固定・コマ追従
-   v3.1:   両ルート同時表示・コマ進行方向で自動反転
-   ※ server.js v3.5 / index.html v3.6.0 とセットで使うこと
+   v3.5.0: 手番プレイヤーを画面中央固定追従・看板長方形化
+   v3.4.x: 回すボタン廃止・本体クリック回転
+   ※ server.js v3.5 / index.html v3.6.1 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -61,63 +59,65 @@ const routeLabel = document.getElementById("routeLabel");
 const routeArea = document.getElementById("routeArea");
 
 // =========================================================
-//  駅座標テーブル（背景路線図方式）
+//  駅座標テーブル（背景路線図方式・広域図に準拠）
 //  pos は server.js の配列インデックスと一致
-//  分岐区間はルートごと、共通区間(白石〜小樽)は共有座標
 // =========================================================
-const BOARD_W = 4400;
-const BOARD_H = 1560;
+const BOARD_W = 4600;
+const BOARD_H = 2200;
 
 // --- 岩見沢経由 分岐（pos 0〜13: 栗山〜厚別）---
+// 栗山→上へ岩見沢→緩く左下→江別以降は下りながら白石へ
 const COORD_IWAMIZAWA_BRANCH = [
-  { x: 3600, y: 820 }, // 0 栗山
-  { x: 3690, y: 650 }, // 1 栗丘
-  { x: 3770, y: 490 }, // 2 栗沢
-  { x: 3830, y: 350 }, // 3 志文
-  { x: 3870, y: 210 }, // 4 岩見沢
-  { x: 3620, y: 210 }, // 5 上幌向
-  { x: 3380, y: 210 }, // 6 幌向
-  { x: 3140, y: 210 }, // 7 豊幌
-  { x: 2900, y: 210 }, // 8 江別
-  { x: 2660, y: 210 }, // 9 高砂
-  { x: 2420, y: 210 }, // 10 野幌
-  { x: 2180, y: 210 }, // 11 大麻
-  { x: 1940, y: 210 }, // 12 森林公園
-  { x: 1700, y: 210 }, // 13 厚別
+  { x: 4180, y: 1240 }, // 0 栗山
+  { x: 4180, y: 1050 }, // 1 栗丘
+  { x: 4180, y: 870 },  // 2 栗沢
+  { x: 4180, y: 690 },  // 3 志文
+  { x: 4180, y: 510 },  // 4 岩見沢
+  { x: 3920, y: 560 },  // 5 上幌向
+  { x: 3660, y: 620 },  // 6 幌向
+  { x: 3400, y: 690 },  // 7 豊幌
+  { x: 3150, y: 770 },  // 8 江別
+  { x: 2980, y: 900 },  // 9 高砂
+  { x: 2830, y: 1040 }, // 10 野幌
+  { x: 2690, y: 1180 }, // 11 大麻
+  { x: 2560, y: 1320 }, // 12 森林公園
+  { x: 2440, y: 1450 }, // 13 厚別
 ];
 
 // --- 追分経由 分岐（pos 0〜20: 栗山〜平和）---
+// 栗山→（右下方向で追分へ）→下に安平→左下へ早来/遠浅/沼ノ端
+// →右上に植苗→上に南千歳→左上へ→北広島から上へ白石方向
 const COORD_OIWAKE_BRANCH = [
-  { x: 3600, y: 820 },  // 0 栗山
-  { x: 3760, y: 980 },  // 1 由仁
-  { x: 3860, y: 1120 }, // 2 古山
-  { x: 3900, y: 1260 }, // 3 三川
-  { x: 3900, y: 1420 }, // 4 追分
-  { x: 3660, y: 1420 }, // 5 安平
-  { x: 3420, y: 1420 }, // 6 早来
-  { x: 3180, y: 1420 }, // 7 遠浅
-  { x: 2940, y: 1420 }, // 8 沼ノ端
-  { x: 2700, y: 1420 }, // 9 植苗
-  { x: 2460, y: 1420 }, // 10 南千歳
-  { x: 2460, y: 1260 }, // 11 千歳
-  { x: 2460, y: 1100 }, // 12 長都
-  { x: 2220, y: 1100 }, // 13 サッポロビール庭園
-  { x: 1980, y: 1100 }, // 14 恵庭
-  { x: 1740, y: 1100 }, // 15 恵み野
-  { x: 1500, y: 1100 }, // 16 島松
-  { x: 1260, y: 1100 }, // 17 北広島
-  { x: 1260, y: 930 },  // 18 上野幌
-  { x: 1260, y: 760 },  // 19 新札幌
-  { x: 1260, y: 590 },  // 20 平和
+  { x: 4180, y: 1240 }, // 0 栗山
+  { x: 4280, y: 1430 }, // 1 由仁
+  { x: 4340, y: 1620 }, // 2 古山
+  { x: 4360, y: 1810 }, // 3 三川
+  { x: 4360, y: 2000 }, // 4 追分
+  { x: 4140, y: 2060 }, // 5 安平
+  { x: 3880, y: 1990 }, // 6 早来
+  { x: 3640, y: 1920 }, // 7 遠浅
+  { x: 3400, y: 1860 }, // 8 沼ノ端
+  { x: 3520, y: 1660 }, // 9 植苗（沼ノ端の右上）
+  { x: 3400, y: 1470 }, // 10 南千歳（植苗の上）
+  { x: 3160, y: 1380 }, // 11 千歳
+  { x: 2920, y: 1320 }, // 12 長都
+  { x: 2680, y: 1300 }, // 13 サッポロビール庭園
+  { x: 2440, y: 1300 }, // 14 恵庭
+  { x: 2200, y: 1300 }, // 15 恵み野
+  { x: 1980, y: 1340 }, // 16 島松
+  { x: 1820, y: 1480 }, // 17 北広島
+  { x: 1820, y: 1290 }, // 18 上野幌
+  { x: 1880, y: 1100 }, // 19 新札幌
+  { x: 1980, y: 920 },  // 20 平和
 ];
 
-// --- 共通区間（白石〜小樽: 左上がり一直線）---
-// COMMON は17駅。白石を右に、小樽を左上に等間隔で並べ、1駅ごとに少し上げる
+// --- 共通区間（白石〜小樽: 左上がり・駅間を十分に広げる）---
+// COMMON は17駅。白石を右下に、小樽を左上に。間隔 約260px。
 const COMMON_COUNT = 17;
-const COMMON_START_X = 1480;
-const COMMON_END_X = 160;
-const COMMON_START_Y = 470;
-const COMMON_END_Y = 150;
+const COMMON_START_X = 2150; // 白石
+const COMMON_END_X = 200;    // 小樽
+const COMMON_START_Y = 760;  // 白石
+const COMMON_END_Y = 220;    // 小樽
 const COORD_COMMON = (function () {
   const arr = [];
   for (let i = 0; i < COMMON_COUNT; i++) {
@@ -130,7 +130,6 @@ const COORD_COMMON = (function () {
   return arr;
 })();
 
-// pos(0始まり) と routeKey から座標を返す
 function coordOf(routeKey, pos) {
   const cs = commonStart[routeKey];
   if (typeof cs === "number" && pos >= cs) {
@@ -330,27 +329,21 @@ function lineThrough(coords, color, width) {
 }
 
 function buildRouteSVG() {
-  const COL_IWA = "#d35400";   // 岩見沢経由（室蘭本線・函館本線）橙系
-  const COL_OIW = "#16a085";   // 追分経由（千歳線）緑系
-  const COL_COM = "#34495e";   // 共通区間（函館本線）濃灰
+  const COL_IWA = "#d35400";
+  const COL_OIW = "#16a085";
+  const COL_COM = "#34495e";
 
-  // 岩見沢経由の線：分岐→共通先頭(白石)へ
   const iwaPath = COORD_IWAMIZAWA_BRANCH.concat([COORD_COMMON[0]]);
-  // 追分経由の線：分岐→共通先頭(白石)へ
   const oiwPath = COORD_OIWAKE_BRANCH.concat([COORD_COMMON[0]]);
-  // 共通区間の線
   const comPath = COORD_COMMON;
 
   let svg = `<svg id="routeSvg" width="${BOARD_W}" height="${BOARD_H}" viewBox="0 0 ${BOARD_W} ${BOARD_H}" xmlns="http://www.w3.org/2000/svg">`;
-  // 背景
   svg += `<rect x="0" y="0" width="${BOARD_W}" height="${BOARD_H}" fill="#fbf7ee" />`;
-  // 路線（太い色帯）
   svg += lineThrough(iwaPath, COL_IWA, 14);
   svg += lineThrough(oiwPath, COL_OIW, 14);
   svg += lineThrough(comPath, COL_COM, 16);
 
-  // 各駅の丸印（背景側）
-  function dots(coords, routeKey, isCommonArr) {
+  function dots(coords) {
     let s = "";
     coords.forEach((c) => {
       s += `<circle cx="${c.x}" cy="${c.y}" r="9" fill="#fff" stroke="#555" stroke-width="3" />`;
@@ -361,10 +354,10 @@ function buildRouteSVG() {
   svg += dots(COORD_OIWAKE_BRANCH);
   svg += dots(COORD_COMMON);
 
-  // ルート名ラベル（路線図風）
-  svg += `<text x="3760" y="120" font-size="34" fill="${COL_IWA}" font-weight="bold">岩見沢経由</text>`;
-  svg += `<text x="3500" y="1500" font-size="34" fill="${COL_OIW}" font-weight="bold">追分経由</text>`;
-  svg += `<text x="${COMMON_END_X + 40}" y="${COMMON_END_Y - 40}" font-size="34" fill="${COL_COM}" font-weight="bold">函館本線</text>`;
+  // ルート名ラベル（線・駅に重ならない空き領域へ）
+  svg += `<text x="4280" y="430" font-size="40" fill="${COL_IWA}" font-weight="bold">岩見沢経由</text>`;
+  svg += `<text x="3700" y="2150" font-size="40" fill="${COL_OIW}" font-weight="bold">追分経由</text>`;
+  svg += `<text x="${COMMON_END_X + 40}" y="${COMMON_END_Y + 120}" font-size="40" fill="${COL_COM}" font-weight="bold">函館本線</text>`;
 
   svg += `</svg>`;
   return svg;
@@ -413,8 +406,8 @@ function makeTrain(colorIndex, name, dir) {
 }
 
 // ===== 盤面描画（座標方式）=====
-let cellMap = {};   // key "rk:pos" -> 駅セル要素
-let coordCellDrawn = {}; // 共通区間の重複描画防止
+let cellMap = {};
+let coordCellDrawn = {};
 
 function buildSign(routeKey, pos) {
   const sign = document.createElement("div");
@@ -462,20 +455,17 @@ function makeCell(routeKey, pos) {
 }
 
 function renderBoard(positions, override) {
-  // 盤面ステージを初期化
   boardEl.innerHTML = "";
   boardEl.style.width = BOARD_W + "px";
   boardEl.style.height = BOARD_H + "px";
   cellMap = {};
   coordCellDrawn = {};
 
-  // 背景SVG
   const bg = document.createElement("div");
   bg.className = "routeBg";
   bg.innerHTML = buildRouteSVG();
   boardEl.appendChild(bg);
 
-  // 駅セルを配置（共通区間は1回だけ実体を作り、両ルートから参照）
   ["iwamizawa", "oiwake"].forEach((rk) => {
     const arr = routes[rk] || [];
     const cs = commonStart[rk];
@@ -498,7 +488,6 @@ function renderBoard(positions, override) {
     }
   });
 
-  // コマを配置
   latestState.players.forEach((p, idx) => {
     let pos = positions[idx];
     if (override && override.idx === idx) pos = override.pos;

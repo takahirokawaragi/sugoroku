@@ -1,19 +1,15 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.6.0
-     日付: 2026-06-21（日）00:05 JST
-     v3.6.0での変更点:
-       - 盤面を「背景路線図(SVG)＋駅マス絶対配置」方式に変更
-         ・#board を position:relative の広いステージにし、
-           各駅セル(.cell)を left/top で絶対配置
-         ・背景 .routeBg に client.js が生成したSVGを敷く
-         ・格子(grid)レイアウトの指定を廃止
-       - 看板・721系コマ・ルーレットの見た目は v3.5.2 を維持
+     バージョン: v3.6.1
+     日付: 2026-06-21（日）00:40 JST
+     v3.6.1での変更点:
+       - 盤面の高さを拡大（#board height 1560→2200）
+       - 駅座標・路線図形状は client.js v3.6.1 側で再設計
+       - 看板・721系コマ・ルーレットの見た目は v3.6.0 を維持
      --- 以下 過去履歴 ---
+     v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
      v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
-     v3.5.0: 駅セル80%幅・看板長方形化・手番プレイヤーを画面中央固定追従
-     v3.4.0: 「ルーレットを回す」ボタンを廃止（本体クリックで回す）
-     ※ server.js v3.5 / client.js v3.6.0 とセットで使用（PC前提）
+     ※ server.js v3.5 / client.js v3.6.1 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -69,7 +65,6 @@
       background: #a3471f;
     }
 
-    /* ===== ルーレット＋操作：画面左上に固定 ===== */
     .fixedPanel {
       position: fixed;
       top: 10px;
@@ -179,7 +174,6 @@
       margin: 2px;
     }
 
-    /* ===== 盤面ビューポート（縦横スクロール）===== */
     .boardScroll {
       width: 100%;
       height: 88vh;
@@ -191,11 +185,10 @@
     /* 盤面ステージ：広い座標空間。各駅は絶対配置 */
     #board {
       position: relative;
-      width: 4400px;
-      height: 1560px;
+      width: 4600px;
+      height: 2200px;
     }
 
-    /* 背景の路線図SVG */
     .routeBg {
       position: absolute;
       left: 0;
@@ -210,7 +203,6 @@
       display: block;
     }
 
-    /* ===== 駅セル（絶対配置・看板は角丸なしの長方形）===== */
     .cell {
       position: absolute;
       transform: translate(-50%, -50%);
@@ -249,7 +241,6 @@
       background: #d4a017;
     }
 
-    /* 青枠：角丸なしの長方形。緑帯を内側いっぱいに貼るため position:relative */
     .stSign {
       position: relative;
       background: #fff;
@@ -282,7 +273,6 @@
       word-break: break-all;
     }
 
-    /* 緑帯：青枠の内側いっぱい（左右・下端まで密着） */
     .stBand {
       position: absolute;
       left: 0;
@@ -337,7 +327,6 @@
       width: 116px;
     }
 
-    /* 名前：省略せず全文表示（1行・はみ出し許容） */
     .pawnName {
       font-size: 10px;
       color: #333;
@@ -348,7 +337,6 @@
       overflow: visible;
     }
 
-    /* ===== 721系電車コマ（元画像寄り）/ .flipで左向き ===== */
     .train {
       position: relative;
       width: 116px;
@@ -539,7 +527,6 @@
       right: 2px;
     }
 
-    /* 結果 */
     #result {
       max-width: 920px;
       margin: 14px auto;
@@ -567,7 +554,6 @@
 <body>
   <h1>みんなですごろく 〜栗山から小樽〜</h1>
 
-  <!-- 画面左上に固定するパネル -->
   <div class="fixedPanel">
     <div class="nameArea" id="nameArea">
       <input id="nameInput" type="text" maxlength="12" placeholder="名前を入力" />
