@@ -1,12 +1,15 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.5.1
-   日付: 2026-06-20（土）23:29 JST
-   v3.5.1での変更点:
-     - 721系コマの構造を精密版に変更（makeTrain を更新）
-       緑ライン2本・窓列・台車(bogie)・スカート・色ドットを描画
-     - 緑帯の修正・駅セル幅は index.html v3.5.1 側で対応
+   バージョン: v3.5.2
+   日付: 2026-06-20（土）23:42 JST
+   v3.5.2での変更点:
+     - 721系コマを元画像寄りに作り直し（makeTrain を更新）
+       前面ガラス・行先表示・ドア3か所・客窓・クーラー・台車3基
+     - プレイヤー識別の赤丸/青丸(colorDot)を削除
+       車体の横帯2本(lineThin/lineThick)をプレイヤー色で塗り分け
+     - 長い名前を省略せず全表示（CSSは index.html v3.5.2 側）
    --- 以下 過去履歴 ---
+   v3.5.1: 721系コマ精密化・緑帯を青枠内側に密着
    v3.5.0: 手番プレイヤーを画面中央固定追従・看板長方形化・駅セル80%幅
    v3.4.2: 数字をカラー帯の上下中央に配置
    v3.4.1: 回すボタンをHTMLから削除・rollBtn依存を廃止（canRoll化）
@@ -16,7 +19,7 @@
    v3.2:   ルーレット画面固定・コマ追従
    v3.1:   両ルート同時表示（外周ループ）・コマ進行方向で自動反転
    v2.2:   iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js v3.5 / index.html v3.5.1 とセットで使うこと
+   ※ server.js v3.5 / index.html v3.5.2 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -318,7 +321,7 @@ function makeCell(routeKey, item) {
   return cell;
 }
 
-// ===== 721系コマ（精密版）=====
+// ===== 721系コマ（元画像寄り・横帯でプレイヤー識別）=====
 function makeTrain(colorIndex, name, dir) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -327,23 +330,30 @@ function makeTrain(colorIndex, name, dir) {
   if (dir === "L") train.classList.add("flip");
   train.style.setProperty("--bandColor", COLORS[colorIndex]);
   train.innerHTML =
-    '<div class="colorDot"></div>' +
     '<div class="trainBody">' +
-      '<div class="trainRoof"></div>' +
+      '<div class="trainRoof">' +
+        '<i class="ac"></i><i class="ac"></i><i class="ac"></i>' +
+      '</div>' +
+      '<div class="trainFront"></div>' +
+      '<div class="trainDest"></div>' +
       '<div class="trainWindows">' +
         '<span class="cab"></span>' +
         '<span class="door"></span>' +
         '<span></span><span></span><span></span>' +
         '<span class="door"></span>' +
-        '<span></span><span></span>' +
+        '<span></span><span></span><span></span>' +
         '<span class="door"></span>' +
-        '<span class="cab"></span>' +
+        '<span></span>' +
       '</div>' +
       '<div class="lineThin"></div>' +
       '<div class="lineThick"></div>' +
     '</div>' +
-    '<div class="trainSkirt"></div>' +
+    '<div class="trainUnder">' +
+      '<div class="trainSkirt"></div>' +
+      '<div class="underBox"></div>' +
+    '</div>' +
     '<div class="trainWheels">' +
+      '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
       '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
       '<div class="bogie"><i class="w1"></i><i class="w2"></i></div>' +
     '</div>';

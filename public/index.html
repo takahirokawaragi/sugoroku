@@ -1,17 +1,20 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.5.1
-     日付: 2026-06-20（土）23:29 JST
-     v3.5.1での変更点:
-       - 緑帯(.stBand)を青枠の内側いっぱい（左右・下端まで密着）に修正
-         絶対配置(position:absolute, left/right/bottom=0)で隙間をなくした
-       - 721系コマをCSSで精密化（デフォルメを抑え、緑ライン2本・窓配置・
-         台車・スカートを実車寄りに）。コマを少し大きく表示
+     バージョン: v3.5.2
+     日付: 2026-06-20（土）23:42 JST
+     v3.5.2での変更点:
+       - 721系コマを元画像寄りに作り直し（横幅116pxに拡大）
+         前面ガラス・行先表示・ドア3か所・客窓・屋根上クーラー・
+         床下機器・台車3基を描画。.pawnWrap も拡大
+       - プレイヤー識別の赤丸/青丸(.colorDot)を削除
+         車体の横帯2本(.lineThin/.lineThick)をプレイヤー色(--bandColor)で塗る
+       - 長い名前を省略せず全表示（.pawnName の幅制限・省略を解除）
      --- 以下 過去履歴 ---
+     v3.5.1: 緑帯を青枠内側に密着・721系コマ精密化
      v3.5.0: 駅セル80%幅・看板長方形化・手番プレイヤーを画面中央固定追従
      v3.4.0: 「ルーレットを回す」ボタンを廃止（本体クリックで回す）
      v3.2:   ルーレット固定・コマ追従・看板の見た目(緑帯・水色窓)
-     ※ server.js v3.5 / client.js v3.5.1 とセットで使用（PC前提）
+     ※ server.js v3.5 / client.js v3.5.2 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -320,26 +323,25 @@
       display: flex;
       flex-direction: column;
       align-items: center;
-      width: 74px;
+      width: 116px;
     }
 
+    /* 名前：省略せず全文表示（1行・はみ出し許容） */
     .pawnName {
-      font-size: 9px;
+      font-size: 10px;
       color: #333;
       text-align: center;
-      line-height: 1.1;
-      margin-top: 1px;
-      max-width: 74px;
-      overflow: hidden;
+      line-height: 1.15;
+      margin-top: 2px;
       white-space: nowrap;
-      text-overflow: ellipsis;
+      overflow: visible;
     }
 
-    /* ===== 721系電車コマ（精密版）/ .flipで左向き ===== */
+    /* ===== 721系電車コマ（元画像寄り）/ .flipで左向き ===== */
     .train {
       position: relative;
-      width: 72px;
-      height: 34px;
+      width: 116px;
+      height: 40px;
     }
 
     .train.flip {
@@ -349,91 +351,157 @@
     /* 車体：銀色のグラデーション */
     .train .trainBody {
       position: relative;
-      width: 72px;
-      height: 24px;
-      background: linear-gradient(#ffffff 0%, #eceff1 35%, #c7ced3 70%, #aeb6bc 100%);
+      width: 116px;
+      height: 28px;
+      background: linear-gradient(#ffffff 0%, #eceff1 32%, #c7ced3 66%, #aeb6bc 100%);
       border: 1px solid #7d858c;
-      border-radius: 4px 6px 3px 3px;
+      border-radius: 5px 9px 3px 3px;
       overflow: hidden;
     }
 
-    /* 屋根の濃いライン */
+    /* 屋根の濃いライン＋クーラー */
     .train .trainRoof {
       position: absolute;
       top: 0;
       left: 0;
       right: 0;
-      height: 3px;
+      height: 4px;
       background: #aab0b5;
     }
 
-    /* 上部の細い緑ライン */
-    .train .lineThin {
+    .train .trainRoof .ac {
       position: absolute;
-      top: 8px;
-      left: 0;
-      right: 0;
-      height: 1.5px;
-      background: #36a94a;
-      opacity: .9;
+      top: -2px;
+      width: 16px;
+      height: 4px;
+      background: #8d949a;
+      border: 1px solid #767d83;
+      border-radius: 1px;
     }
 
-    /* 窓下の太い緑帯 */
+    .train .trainRoof .ac:nth-child(1) {
+      left: 24px;
+    }
+
+    .train .trainRoof .ac:nth-child(2) {
+      left: 52px;
+    }
+
+    .train .trainRoof .ac:nth-child(3) {
+      left: 80px;
+    }
+
+    /* 前面（黒い大きなガラス）：右端＝進行方向先頭 */
+    .train .trainFront {
+      position: absolute;
+      top: 4px;
+      right: 1px;
+      width: 11px;
+      height: 16px;
+      background: linear-gradient(135deg, #2b3138, #4a525a);
+      border: 1px solid #20262c;
+      border-radius: 2px 7px 3px 2px;
+      z-index: 3;
+    }
+
+    /* 行先表示（水色の小窓） */
+    .train .trainDest {
+      position: absolute;
+      top: 5px;
+      right: 13px;
+      width: 12px;
+      height: 4px;
+      background: #bfe3ff;
+      border: 1px solid #8db8d6;
+      border-radius: 1px;
+      z-index: 3;
+    }
+
+    /* 上部の細い緑ライン → プレイヤー色 */
+    .train .lineThin {
+      position: absolute;
+      top: 10px;
+      left: 0;
+      right: 0;
+      height: 2px;
+      background: var(--bandColor, #2ecc71);
+    }
+
+    /* 窓下の太い緑帯 → プレイヤー色 */
     .train .lineThick {
       position: absolute;
       bottom: 5px;
       left: 0;
       right: 0;
-      height: 3px;
-      background: #2f9e45;
+      height: 4px;
+      background: var(--bandColor, #2ecc71);
     }
 
     /* 窓列（乗務員窓・ドア・客窓） */
     .train .trainWindows {
       position: absolute;
-      top: 3.5px;
-      left: 3px;
-      right: 3px;
-      height: 8px;
+      top: 4.5px;
+      left: 4px;
+      right: 26px;
+      height: 9px;
       display: flex;
-      gap: 1.5px;
+      gap: 2px;
       align-items: center;
     }
 
     .train .trainWindows span {
       flex: 1;
-      height: 8px;
+      height: 9px;
       background: linear-gradient(#dff0ff, #bcdcf5);
       border: 1px solid #9cc0e0;
       border-radius: 1px;
     }
 
     .train .trainWindows .door {
-      flex: 0 0 5px;
-      height: 9px;
+      flex: 0 0 7px;
+      height: 11px;
       background: #c3ccd3;
       border: 1px solid #98a2aa;
       border-radius: 1px;
     }
 
     .train .trainWindows .cab {
-      flex: 0 0 7px;
-      height: 8px;
+      flex: 0 0 9px;
+      height: 9px;
       background: linear-gradient(#cfe6ff, #a9cdee);
       border: 1px solid #8fb6da;
-      border-radius: 1px 4px 1px 1px;
+      border-radius: 1px 3px 1px 1px;
     }
 
-    /* スカート（排障器） */
-    .train .trainSkirt {
-      width: 66px;
-      height: 3px;
+    /* 床下：スカート＋機器箱 */
+    .train .trainUnder {
+      position: relative;
+      width: 110px;
+      height: 4px;
       margin: 0 auto;
+    }
+
+    .train .trainSkirt {
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 0;
+      height: 4px;
       background: #6b7278;
       border-radius: 0 0 2px 2px;
     }
 
-    /* 台車 */
+    .train .underBox {
+      position: absolute;
+      left: 38px;
+      width: 34px;
+      top: 0;
+      height: 5px;
+      background: #5a6166;
+      border-radius: 0 0 1px 1px;
+    }
+
+    /* 台車3基 */
     .train .trainWheels {
       position: absolute;
       bottom: 0;
@@ -445,8 +513,8 @@
 
     .train .bogie {
       position: relative;
-      width: 18px;
-      height: 7px;
+      width: 22px;
+      height: 8px;
       background: #3b4146;
       border-radius: 2px;
     }
@@ -454,33 +522,19 @@
     .train .bogie i {
       position: absolute;
       bottom: -2px;
-      width: 5px;
-      height: 5px;
+      width: 6px;
+      height: 6px;
       background: #222;
       border: 1px solid #555;
       border-radius: 50%;
     }
 
     .train .bogie i.w1 {
-      left: 1px;
+      left: 2px;
     }
 
     .train .bogie i.w2 {
-      right: 1px;
-    }
-
-    /* プレイヤー色の識別ドット（屋根上に小さく） */
-    .train .colorDot {
-      position: absolute;
-      top: -3px;
-      left: 50%;
-      transform: translateX(-50%);
-      width: 8px;
-      height: 8px;
-      border-radius: 50%;
-      background: var(--bandColor, #2ecc71);
-      border: 1px solid #fff;
-      box-shadow: 0 0 2px rgba(0, 0, 0, .4);
+      right: 2px;
     }
 
     /* 結果 */
