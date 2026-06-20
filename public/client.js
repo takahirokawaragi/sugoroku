@@ -1,27 +1,22 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.3.5
-   日付: 2026-06-20（土）17:21 JST
-   v3.3.5での変更点:
-     - 数字を外周ギリギリへ寄せ、カラー帯を細くして元画像に近づけた
-       innerR 0.34→0.50 / 数字配置を外周寄り（outerR-outerR*0.13）
-     - 2桁の数字(10)はフォントを自動縮小して枠内に収め、はみ出しを解消
+   バージョン: v3.4.1
+   日付: 2026-06-20（土）22:14 JST
+   v3.4.1での変更点:
+     - 「ルーレットを回す」ボタンを HTML から削除したことに対応
+       rollBtn 要素への依存を全廃し、回せる条件を canRoll 変数で管理
+       （ルーレット本体クリックで回す仕様は v3.4.0 を維持）
    --- 以下 過去履歴 ---
-   v3.3.4:
-     - カラー帯を太くし数字を大型化（数字大きいが10がはみ出し）
-   v3.3.3:
-     - ルーレット全体を 1.5倍に拡大（index.html は無改変）
-   v3.3.2:
-     - ルーレットを添付画像のデザインに忠実に再現
-       中心から外へ：小さな真円 → 大きな真円 → 十角形リング
-       → 放射状の目盛り線10本 → カラフルな10分割（数字1〜10）→ 外枠
-   v3.3:
-     - 共通区間(白石→苗穂→札幌→…→小樽)の並び順バグを修正
-     - computeLayout の列計算を見直し、駅の重なりをなくした
-   v3.2: ルーレット画面固定・コマ追従
-   v3.1: 両ルート同時表示（外周ループ）・コマ進行方向で自動反転
-   v2.2: iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js v3.5 / index.html v3.2 とセットで使うこと
+   v3.4.0: 帯を70%幅・数字を中心寄せ・10同サイズ・本体クリックで回転
+   v3.3.5: 数字を外周寄せ・帯を細く
+   v3.3.4: カラー帯を太く・数字を大型化
+   v3.3.3: ルーレット全体を1.5倍に拡大（index.html は無改変）
+   v3.3.2: ルーレットを添付画像のデザインに忠実に再現
+   v3.3:   共通区間の並び順バグ修正・computeLayout 見直し
+   v3.2:   ルーレット画面固定・コマ追従
+   v3.1:   両ルート同時表示（外周ループ）・コマ進行方向で自動反転
+   v2.2:   iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
+   ※ server.js v3.5 / index.html v3.4.0 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -46,12 +41,14 @@ let lastShownSeq = 0;
 let animating = false;
 let latestState = null;
 
+// ★ルーレットを回せるか（旧 rollBtn.disabled の代わり）
+let canRoll = false;
+
 const boardEl = document.getElementById("board");
 const statusEl = document.getElementById("status");
 const playersEl = document.getElementById("players");
 const resultEl = document.getElementById("result");
 const startBtn = document.getElementById("startBtn");
-const rollBtn = document.getElementById("rollBtn");
 const resetBtn = document.getElementById("resetBtn");
 const wheel = document.getElementById("wheel");
 const ctx = wheel.getContext("2d");
@@ -71,6 +68,7 @@ const routeArea = document.getElementById("routeArea");
   wheel.height = 360;
   wheel.style.width = "240px"; // 表示サイズ＝160 × 1.5
   wheel.style.height = "240px";
+  wheel.style.cursor = "pointer"; // クリックで回せることを示す
   const wrap = document.getElementById("rouletteWrap");
   if (wrap) {
     wrap.style.width = "240px";
@@ -134,7 +132,7 @@ function fanfare() {
   seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
 }
 
-// ===== ルーレット描画（v3.3.5：数字を外周ギリギリへ・帯を細く・10はみ出し解消）=====
+// ===== ルーレット描画（v3.4.0：帯を70%幅に・数字を少し中心へ・10も同サイズ）=====
 // 中心から外へ：小さな真円 → 大きな真円 → 十角形リング
 //   → 放射状の目盛り線(10) → カラフル10分割(数字) → 外枠
 function drawWheel() {
@@ -148,8 +146,11 @@ function drawWheel() {
   ctx.fillStyle = "#fff"; ctx.fill();
   ctx.lineWidth = 2; ctx.strokeStyle = "#cccccc"; ctx.stroke();
 
-  const outerR = r - 6;       // カラー帯の外端
-  const innerR = r * 0.50;    // ★カラー帯の内端（帯を細くして数字を外周へ）
+  const outerR = r - 6;                  // カラー帯の外端
+  const prevInnerR = r * 0.50;           // v3.3.5 のカラー帯内端
+  const prevBandW = outerR - prevInnerR; // v3.3.5 のカラー帯幅
+  const bandW = prevBandW * 0.70;        // ★帯幅を70%に細く
+  const innerR = outerR - bandW;         // 細くした分、内端は外へ寄る
   const lineGray = "#9aa1a8";
 
   // --- 外周：カラフルな10分割セグメント（数字つき）---
@@ -162,17 +163,15 @@ function drawWheel() {
     ctx.closePath();
     ctx.fillStyle = WHEEL_COLORS[i]; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
-    // 数字（外周ギリギリ・大きく。2桁は少し縮小してはみ出し防止）
+    // 数字（全て同じサイズ。少し中心側に戻して帯内に収める）
     const label = String(i + 1);
-    const baseFont = r * 0.30;
-    const fontSize = (label.length >= 2) ? baseFont * 0.85 : baseFont; // ★10だけ縮小
     ctx.save();
     ctx.translate(r, r);
     ctx.rotate(start + seg / 2);
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(fontSize) + "px sans-serif";
+    ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(r * 0.30) + "px sans-serif";
     ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    const textR = outerR - outerR * 0.13; // ★外周ギリギリ
+    const textR = outerR - outerR * 0.22; // ★少し中心側へ
     ctx.rotate(Math.PI / 2);
     ctx.strokeText(label, 0, -textR);
     ctx.fillText(label, 0, -textR);
@@ -442,7 +441,7 @@ function processNextMove() {
   if (!next) { finalizeState(latestState); return; }
 
   animating = true;
-  rollBtn.disabled = true;
+  canRoll = false;
   const rk = latestState.players[next.index].routeKey || "oiwake";
   statusEl.textContent = next.name + " がルーレットを回しています...";
   renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
@@ -463,6 +462,16 @@ function processNextMove() {
   });
 }
 
+// ===== ルーレットを回す（本体クリック）=====
+// canRoll が true のときだけ回せる（旧 rollBtn の役割）。
+function tryRoll() {
+  if (!canRoll) return;
+  unlockAudio();
+  canRoll = false;
+  socket.emit("roll");
+}
+wheel.addEventListener("click", tryRoll);
+
 // ===== ボタン =====
 nameBtn.addEventListener("click", () => {
   clickSound("name");
@@ -472,18 +481,18 @@ nameBtn.addEventListener("click", () => {
 routeOiwakeBtn.addEventListener("click", () => { clickSound("route"); socket.emit("setRoute", "oiwake"); });
 routeIwamizawaBtn.addEventListener("click", () => { clickSound("route"); socket.emit("setRoute", "iwamizawa"); });
 startBtn.addEventListener("click", () => { clickSound("start"); socket.emit("start"); });
-rollBtn.addEventListener("click", () => { unlockAudio(); rollBtn.disabled = true; socket.emit("roll"); });
 resetBtn.addEventListener("click", () => {
   clickSound("reset");
   if (confirm("ゲームをリセットして最初に戻しますか？")) socket.emit("reset");
 });
 
 socket.on("joined", (id) => { myId = id; });
-socket.on("rejected", (msg) => { statusEl.textContent = msg; startBtn.disabled = true; rollBtn.disabled = true; });
+socket.on("rejected", (msg) => { statusEl.textContent = msg; startBtn.disabled = true; canRoll = false; });
 
 socket.on("resetReady", () => {
   nameInput.value = "";
   lastShownSeq = 0; animating = false; fanfaredIndexes = {}; currentRotation = 0;
+  canRoll = false;
   wheel.style.transition = "none"; wheel.style.transform = "rotate(0deg)";
   setTimeout(() => { wheel.style.transition = ""; }, 50);
   resultEl.classList.remove("show");
@@ -529,22 +538,22 @@ function finalizeState(state) {
 
   if (state.finished && allMovesShown && !animating) {
     statusEl.textContent = "🏁 全員ゴール（小樽）！ゲーム終了";
-    startBtn.disabled = true; rollBtn.disabled = true;
+    startBtn.disabled = true; canRoll = false;
     showResult(state);
     return;
   }
   if (!state.started) {
     statusEl.textContent = "ルートと名前を決めて「ゲーム開始」を押してください";
-    startBtn.disabled = false; rollBtn.disabled = true;
+    startBtn.disabled = false; canRoll = false;
     resultEl.classList.remove("show");
     return;
   }
   startBtn.disabled = true;
   const current = state.players[state.currentTurn];
   const myTurn = current && current.id === myId;
-  statusEl.textContent = myTurn ? "あなたの番です！ルーレットを回してください"
+  statusEl.textContent = myTurn ? "あなたの番です！ルーレットをタップして回してください"
     : (current ? current.name + " の番です..." : "");
-  rollBtn.disabled = !myTurn || animating;
+  canRoll = !!myTurn && !animating;
 
   const meIdx = state.players.findIndex((p) => p.id === myId);
   if (meIdx >= 0) {
