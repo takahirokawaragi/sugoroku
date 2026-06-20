@@ -1,15 +1,16 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.3.4
-   日付: 2026-06-20（土）17:13 JST
-   v3.3.4での変更点:
-     - 元画像にさらに忠実化：カラー帯を太くし、数字を帯いっぱいに大型化
-       innerR 0.42→0.34 / 数字フォント r*0.20→r*0.30 / 数字を帯中央へ
-     - 中央の十角形リング・真円を少し縮小して外周帯にスペースを譲る
+   バージョン: v3.3.5
+   日付: 2026-06-20（土）17:21 JST
+   v3.3.5での変更点:
+     - 数字を外周ギリギリへ寄せ、カラー帯を細くして元画像に近づけた
+       innerR 0.34→0.50 / 数字配置を外周寄り（outerR-outerR*0.13）
+     - 2桁の数字(10)はフォントを自動縮小して枠内に収め、はみ出しを解消
    --- 以下 過去履歴 ---
+   v3.3.4:
+     - カラー帯を太くし数字を大型化（数字大きいが10がはみ出し）
    v3.3.3:
      - ルーレット全体を 1.5倍に拡大（index.html は無改変）
-     - 数字を外周寄りに移動し大型化
    v3.3.2:
      - ルーレットを添付画像のデザインに忠実に再現
        中心から外へ：小さな真円 → 大きな真円 → 十角形リング
@@ -133,7 +134,7 @@ function fanfare() {
   seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
 }
 
-// ===== ルーレット描画（v3.3.4：カラー帯を太く・数字を帯いっぱいに大型化）=====
+// ===== ルーレット描画（v3.3.5：数字を外周ギリギリへ・帯を細く・10はみ出し解消）=====
 // 中心から外へ：小さな真円 → 大きな真円 → 十角形リング
 //   → 放射状の目盛り線(10) → カラフル10分割(数字) → 外枠
 function drawWheel() {
@@ -148,7 +149,7 @@ function drawWheel() {
   ctx.lineWidth = 2; ctx.strokeStyle = "#cccccc"; ctx.stroke();
 
   const outerR = r - 6;       // カラー帯の外端
-  const innerR = r * 0.34;    // ★カラー帯の内端（帯を太くして数字を大きく）
+  const innerR = r * 0.50;    // ★カラー帯の内端（帯を細くして数字を外周へ）
   const lineGray = "#9aa1a8";
 
   // --- 外周：カラフルな10分割セグメント（数字つき）---
@@ -161,24 +162,27 @@ function drawWheel() {
     ctx.closePath();
     ctx.fillStyle = WHEEL_COLORS[i]; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
-    // 数字（帯の中央・大きく）
+    // 数字（外周ギリギリ・大きく。2桁は少し縮小してはみ出し防止）
+    const label = String(i + 1);
+    const baseFont = r * 0.30;
+    const fontSize = (label.length >= 2) ? baseFont * 0.85 : baseFont; // ★10だけ縮小
     ctx.save();
     ctx.translate(r, r);
     ctx.rotate(start + seg / 2);
     ctx.textAlign = "center"; ctx.textBaseline = "middle";
-    ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(r * 0.30) + "px sans-serif"; // ★大型化
+    ctx.fillStyle = "#fff"; ctx.font = "bold " + Math.round(fontSize) + "px sans-serif";
     ctx.lineWidth = 4; ctx.strokeStyle = "rgba(0,0,0,0.35)";
-    const textR = (outerR + innerR) / 2; // ★帯の中央
+    const textR = outerR - outerR * 0.13; // ★外周ギリギリ
     ctx.rotate(Math.PI / 2);
-    ctx.strokeText(String(i + 1), 0, -textR);
-    ctx.fillText(String(i + 1), 0, -textR);
+    ctx.strokeText(label, 0, -textR);
+    ctx.fillText(label, 0, -textR);
     ctx.restore();
   }
 
-  // 中心からの各層の半径（外周帯にスペースを譲るため少し縮小）
-  const decagonR   = r * 0.24;   // 十角形リングの半径
-  const circleBig  = r * 0.135;  // 大きな真円
-  const circleSmall= r * 0.07;   // 小さな真円
+  // 中心からの各層の半径
+  const decagonR   = r * 0.30;   // 十角形リングの半径
+  const circleBig  = r * 0.165;  // 大きな真円
+  const circleSmall= r * 0.085;  // 小さな真円
 
   // --- 放射状の目盛り線（10本）：十角形の各辺の外から内端へ ---
   const tickOuter = innerR - 4;       // カラー帯のすぐ内側
