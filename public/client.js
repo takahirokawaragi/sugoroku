@@ -1,15 +1,19 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.3
-   日付: 2026-06-12
-   v3.3での変更点:
+   バージョン: v3.3.2
+   日付: 2026-06-20（土）16:49 JST
+   v3.3.2での変更点:
+     - ルーレットを添付画像のデザインに忠実に再現
+       中心から外へ：小さな真円 → 大きな真円 → 十角形リング
+       → 放射状の目盛り線10本 → カラフルな10分割（数字1〜10）→ 外枠
+   --- 以下 過去履歴 ---
+   v3.3:
      - 共通区間(白石→苗穂→札幌→…→小樽)の並び順バグを修正
-       （苗穂が消える／白石と札幌が入れ替わる問題を解消）
      - computeLayout の列計算を見直し、駅の重なりをなくした
    v3.2: ルーレット画面固定・コマ追従
    v3.1: 両ルート同時表示（外周ループ）・コマ進行方向で自動反転
    v2.2: iPhone音復活・721系風電車・看板の見た目（緑帯・水色窓）
-   ※ server.js v3.1 / index.html v3.2 とセットで使うこと
+   ※ server.js v3.5 / index.html v3.2 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -106,17 +110,25 @@ function fanfare() {
   seq.forEach((n) => setTimeout(() => { beep(n.f, n.d, "triangle", 0.32); beep(n.f * 1.5, n.d, "square", 0.10); }, n.t));
 }
 
-// ===== ルーレット描画 =====
+// ===== ルーレット描画（v3.3.2：画像のデザインを忠実に再現）=====
+// 中心から外へ：小さな真円 → 大きな真円 → 十角形リング
+//   → 放射状の目盛り線(10) → カラフル10分割(数字) → 外枠
 function drawWheel() {
   const size = wheel.width;
   const r = size / 2;
   const seg = (Math.PI * 2) / SEGMENTS;
   ctx.clearRect(0, 0, size, size);
+
+  // 全体の白い土台＋いちばん外側の細い外枠
   ctx.beginPath(); ctx.arc(r, r, r - 2, 0, Math.PI * 2);
   ctx.fillStyle = "#fff"; ctx.fill();
-  ctx.lineWidth = 2; ctx.strokeStyle = "#ccc"; ctx.stroke();
-  const outerR = r - 6;
-  const innerR = r * 0.42;
+  ctx.lineWidth = 2; ctx.strokeStyle = "#cccccc"; ctx.stroke();
+
+  const outerR = r - 6;       // カラー帯の外端
+  const innerR = r * 0.46;    // カラー帯の内端
+  const lineGray = "#9aa1a8";
+
+  // --- 外周：カラフルな10分割セグメント（数字つき）---
   for (let i = 0; i < SEGMENTS; i++) {
     const start = i * seg - Math.PI / 2;
     const end = (i + 1) * seg - Math.PI / 2;
@@ -126,6 +138,7 @@ function drawWheel() {
     ctx.closePath();
     ctx.fillStyle = WHEEL_COLORS[i]; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#fff"; ctx.stroke();
+    // 数字
     ctx.save();
     ctx.translate(r, r);
     ctx.rotate(start + seg / 2);
@@ -138,6 +151,59 @@ function drawWheel() {
     ctx.fillText(String(i + 1), 0, -textR + 4);
     ctx.restore();
   }
+
+  // 中心からの各層の半径
+  const decagonR   = r * 0.30;   // 十角形リングの半径
+  const circleBig  = r * 0.165;  // 大きな真円
+  const circleSmall= r * 0.085;  // 小さな真円
+
+  // --- 放射状の目盛り線（10本）：十角形の各辺の外から内端へ ---
+  const tickOuter = innerR - 4;       // カラー帯のすぐ内側
+  const tickInner = decagonR + 4;     // 十角形の少し外
+  ctx.strokeStyle = lineGray;
+  ctx.lineWidth = 3;
+  ctx.lineCap = "round";
+  for (let i = 0; i < SEGMENTS; i++) {
+    const a = (i + 0.5) * seg - Math.PI / 2; // セグメント中央の角度
+    ctx.beginPath();
+    ctx.moveTo(r + Math.cos(a) * tickInner, r + Math.sin(a) * tickInner);
+    ctx.lineTo(r + Math.cos(a) * tickOuter, r + Math.sin(a) * tickOuter);
+    ctx.stroke();
+  }
+
+  // --- 十角形リング（中が白、灰色の輪郭）---
+  // 頂点が各セグメントの境目に来る向き（10頂点）
+  ctx.beginPath();
+  for (let k = 0; k < 10; k++) {
+    const ang = k * seg - Math.PI / 2; // セグメント境界の角度
+    const x = r + Math.cos(ang) * decagonR;
+    const y = r + Math.sin(ang) * decagonR;
+    if (k === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+  }
+  ctx.closePath();
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = lineGray;
+  ctx.stroke();
+
+  // --- 大きな真円 ---
+  ctx.beginPath();
+  ctx.arc(r, r, circleBig, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = lineGray;
+  ctx.stroke();
+
+  // --- 小さな真円（いちばん内側）---
+  ctx.beginPath();
+  ctx.arc(r, r, circleSmall, 0, Math.PI * 2);
+  ctx.fillStyle = "#ffffff";
+  ctx.fill();
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = lineGray;
+  ctx.stroke();
 }
 drawWheel();
 
