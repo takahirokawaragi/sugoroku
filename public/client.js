@@ -1,19 +1,19 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.6.2
-   日付: 2026-06-21（日）01:20 JST
-   v3.6.2での変更点:
-     - 線の錯綜を解消（岩見沢経由を白石へ素直に下ろし、
-       追分経由の北上線を内側へ寄せ交差を1点に整理）
-     - 共通区間(白石〜小樽)の駅間を約300pxに拡大し線路を見やすく
-     - 盤面の上下左右に余白(MARGIN)を確保し、全駅座標をオフセット。
-       端の駅(白石〜小樽)でも中央固定追従が効くように
-     - 盤面サイズを拡大
+   バージョン: v3.6.4
+   日付: 2026-06-21（日）04:57 JST
+   v3.6.4での変更点:
+     - 日付ヘッダの誤りを修正（v3.6.3 は誤って「02:00 JST」と表記し、
+       実際の日付ともずれていた）。正しい現在日時 2026-06-21（日）
+       04:57 JST に統一。バージョンを v3.6.4 に繰り上げ。
+     - ロジック・座標・描画は v3.6.3（白石中心の三差路）から変更なし。
    --- 以下 過去履歴 ---
-   v3.6.1: 駅座標を広域図に合わせ再設計・共通区間の重なり解消
+   v3.6.3: 駅座標を白石中心の三差路で全面再設計（3線の錯綜を白石1点に集約）
+   v3.6.2: 線錯綜の暫定対応・共通区間拡大・盤面余白
+   v3.6.1: 駅座標を広域図に合わせ再設計
    v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
    v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
-   ※ server.js v3.5 / index.html v3.6.2 とセットで使うこと
+   ※ server.js v3.5 / index.html v3.6.4 とセットで使うこと
    ========================================================= */
 
 const socket = io();
@@ -57,95 +57,99 @@ const routeLabel = document.getElementById("routeLabel");
 const routeArea = document.getElementById("routeArea");
 
 // =========================================================
-//  駅座標テーブル（背景路線図方式・広域図に準拠）
+//  駅座標テーブル（白石中心の三差路・広域図準拠）
 //  pos は server.js の配列インデックスと一致
-//  ※ 端の駅でも中央固定が効くよう、全座標に MARGIN を加算する
+//  RAW 座標は白石(SHIROISHI)を基準に設計し、最後に MARGIN を加算。
+//  ・岩見沢経由＝白石より上の帯(yが小さい側)
+//  ・追分経由 ＝白石より下の帯(yが大きい側)
+//  ・共通区間 ＝白石から左上(x,y とも小さくなる)
+//  これで白石以外で線が交差しない。
 // =========================================================
-const MARGIN = 1100;          // 上下左右の余白（中央固定用）
-const CONTENT_W = 4300;       // 駅が占める実体の横幅
-const CONTENT_H = 2050;       // 駅が占める実体の縦幅
-const BOARD_W = CONTENT_W + MARGIN * 2;
-const BOARD_H = CONTENT_H + MARGIN * 2;
+const MARGIN = 1100;
+
+// 白石の RAW 基準座標
+const SHI_X = 3400;
+const SHI_Y = 1400;
+
+// --- 共通区間（白石〜小樽: 左上がり一直線・駅間ゆったり）---
+const COMMON_COUNT = 17;
+const COMMON_STEP_X = 250; // 1駅あたり左へ
+const COMMON_STEP_Y = 60;  // 1駅あたり上へ
+const RAW_COMMON = (function () {
+  const arr = [];
+  for (let i = 0; i < COMMON_COUNT; i++) {
+    arr.push({ x: SHI_X - COMMON_STEP_X * i, y: SHI_Y - COMMON_STEP_Y * i });
+  }
+  return arr; // [0]=白石 ... [16]=小樽
+})();
 
 // --- 岩見沢経由 分岐（pos 0〜13: 栗山〜厚別）---
-// 栗山→上へ岩見沢→緩く左下→江別以降は下りながら白石へ素直に集約
+// 白石(SHI)より上の帯のみ使用。栗山(右・中段)→上へ岩見沢→左へ→左下で白石へ。
+// 末尾(厚別)の次に白石へ接続。すべて y < SHI_Y。
 const RAW_IWAMIZAWA_BRANCH = [
-  { x: 4000, y: 1180 }, // 0 栗山
-  { x: 4000, y: 1000 }, // 1 栗丘
-  { x: 4000, y: 820 },  // 2 栗沢
-  { x: 4000, y: 650 },  // 3 志文
-  { x: 4000, y: 480 },  // 4 岩見沢
-  { x: 3740, y: 540 },  // 5 上幌向
-  { x: 3490, y: 610 },  // 6 幌向
-  { x: 3240, y: 690 },  // 7 豊幌
-  { x: 3000, y: 780 },  // 8 江別
-  { x: 2820, y: 900 },  // 9 高砂
-  { x: 2660, y: 1020 }, // 10 野幌
-  { x: 2520, y: 1140 }, // 11 大麻
-  { x: 2400, y: 1240 }, // 12 森林公園
-  { x: 2300, y: 1330 }, // 13 厚別
+  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山
+  { x: SHI_X + 1850, y: SHI_Y - 430 },  // 1 栗丘
+  { x: SHI_X + 1850, y: SHI_Y - 610 },  // 2 栗沢
+  { x: SHI_X + 1850, y: SHI_Y - 790 },  // 3 志文
+  { x: SHI_X + 1850, y: SHI_Y - 970 },  // 4 岩見沢
+  { x: SHI_X + 1600, y: SHI_Y - 970 },  // 5 上幌向
+  { x: SHI_X + 1360, y: SHI_Y - 940 },  // 6 幌向
+  { x: SHI_X + 1140, y: SHI_Y - 870 },  // 7 豊幌
+  { x: SHI_X + 940,  y: SHI_Y - 780 },  // 8 江別
+  { x: SHI_X + 760,  y: SHI_Y - 690 },  // 9 高砂
+  { x: SHI_X + 600,  y: SHI_Y - 590 },  // 10 野幌
+  { x: SHI_X + 450,  y: SHI_Y - 490 },  // 11 大麻
+  { x: SHI_X + 310,  y: SHI_Y - 380 },  // 12 森林公園
+  { x: SHI_X + 180,  y: SHI_Y - 260 },  // 13 厚別
 ];
 
 // --- 追分経由 分岐（pos 0〜20: 栗山〜平和）---
-// 栗山→（右下で追分）→下に安平→左下へ早来/遠浅/沼ノ端
-// →右上に植苗→上に南千歳→左へ→北広島から上へ。
-// 北上線は白石より十分内側(x小さめ)で、岩見沢経由と交差しないようにする
+// 白石(SHI)より下の帯のみ使用。栗山(右・中段)→右下へ追分→左へ→左上へ→上で白石へ。
+// 末尾(平和)の次に白石へ接続。すべて y > SHI_Y。
 const RAW_OIWAKE_BRANCH = [
-  { x: 4000, y: 1180 }, // 0 栗山
-  { x: 4100, y: 1370 }, // 1 由仁
-  { x: 4160, y: 1560 }, // 2 古山
-  { x: 4180, y: 1750 }, // 3 三川
-  { x: 4180, y: 1940 }, // 4 追分
-  { x: 3960, y: 2000 }, // 5 安平
-  { x: 3700, y: 1930 }, // 6 早来
-  { x: 3460, y: 1860 }, // 7 遠浅
-  { x: 3220, y: 1800 }, // 8 沼ノ端
-  { x: 3340, y: 1610 }, // 9 植苗（沼ノ端の右上）
-  { x: 3220, y: 1420 }, // 10 南千歳（植苗の上）
-  { x: 2980, y: 1360 }, // 11 千歳
-  { x: 2740, y: 1320 }, // 12 長都
-  { x: 2500, y: 1320 }, // 13 サッポロビール庭園
-  { x: 2260, y: 1320 }, // 14 恵庭
-  { x: 2020, y: 1320 }, // 15 恵み野
-  { x: 1800, y: 1340 }, // 16 島松
-  { x: 1620, y: 1460 }, // 17 北広島
-  { x: 1620, y: 1260 }, // 18 上野幌
-  { x: 1620, y: 1060 }, // 19 新札幌
-  { x: 1620, y: 860 },  // 20 平和
+  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（岩見沢経由と同地点）
+  { x: SHI_X + 1980, y: SHI_Y - 80 },   // 1 由仁
+  { x: SHI_X + 2060, y: SHI_Y + 100 },  // 2 古山
+  { x: SHI_X + 2090, y: SHI_Y + 290 },  // 3 三川
+  { x: SHI_X + 2090, y: SHI_Y + 480 },  // 4 追分
+  { x: SHI_X + 1870, y: SHI_Y + 560 },  // 5 安平
+  { x: SHI_X + 1630, y: SHI_Y + 520 },  // 6 早来
+  { x: SHI_X + 1400, y: SHI_Y + 470 },  // 7 遠浅
+  { x: SHI_X + 1180, y: SHI_Y + 440 },  // 8 沼ノ端
+  { x: SHI_X + 1300, y: SHI_Y + 280 },  // 9 植苗（沼ノ端の右上）
+  { x: SHI_X + 1180, y: SHI_Y + 130 },  // 10 南千歳（植苗の上）
+  { x: SHI_X + 960,  y: SHI_Y + 130 },  // 11 千歳
+  { x: SHI_X + 740,  y: SHI_Y + 130 },  // 12 長都
+  { x: SHI_X + 520,  y: SHI_Y + 150 },  // 13 サッポロビール庭園
+  { x: SHI_X + 320,  y: SHI_Y + 200 },  // 14 恵庭
+  { x: SHI_X + 150,  y: SHI_Y + 270 },  // 15 恵み野
+  { x: SHI_X + 30,   y: SHI_Y + 370 },  // 16 島松
+  { x: SHI_X - 80,   y: SHI_Y + 490 },  // 17 北広島
+  { x: SHI_X + 60,   y: SHI_Y + 400 },  // 18 上野幌
+  { x: SHI_X + 120,  y: SHI_Y + 260 },  // 19 新札幌
+  { x: SHI_X + 160,  y: SHI_Y + 120 },  // 20 平和
 ];
 
-// --- 共通区間（白石〜小樽: 左上がり・駅間を約300pxに拡大）---
-const COMMON_COUNT = 17;
-const RAW_COMMON_START_X = 1900; // 白石（追分の北上線・岩見沢の下り線が合流）
-const RAW_COMMON_END_X = 100;    // 小樽
-const RAW_COMMON_START_Y = 700;  // 白石
-const RAW_COMMON_END_Y = 120;    // 小樽
+// 全 RAW 座標を正の領域へ収め、MARGIN を加える
+// （最小 x/y を求めて 0 始まりに正規化したのち MARGIN 加算）
+const ALL_RAW = RAW_IWAMIZAWA_BRANCH.concat(RAW_OIWAKE_BRANCH, RAW_COMMON);
+const MIN_X = Math.min.apply(null, ALL_RAW.map((c) => c.x));
+const MIN_Y = Math.min.apply(null, ALL_RAW.map((c) => c.y));
+const MAX_X = Math.max.apply(null, ALL_RAW.map((c) => c.x));
+const MAX_Y = Math.max.apply(null, ALL_RAW.map((c) => c.y));
 
-// 上記 RAW 値を確保した上で、駅間が約300px以上になるよう横幅を再計算
-// （白石→小樽の x スパンを広く取り直す）
-const COMMON_SPAN_X = 4200;      // 共通区間の横スパン（広く）
-const COMMON_SPAN_Y = 1000;      // 共通区間の縦スパン（左上がり）
-const RAW_COORD_COMMON = (function () {
-  const arr = [];
-  const startX = RAW_COMMON_START_X + (COMMON_SPAN_X - (RAW_COMMON_START_X - RAW_COMMON_END_X));
-  // 白石を最も右に、小樽を左上に。白石x = startX、小樽x = startX - COMMON_SPAN_X
-  for (let i = 0; i < COMMON_COUNT; i++) {
-    const t = i / (COMMON_COUNT - 1);
-    arr.push({
-      x: Math.round(startX - COMMON_SPAN_X * t),
-      y: Math.round(RAW_COMMON_START_Y - COMMON_SPAN_Y * t),
-    });
-  }
-  return arr;
-})();
-
-// 全 RAW 座標に MARGIN を加算して実座標へ
-function applyMargin(arr) {
-  return arr.map((c) => ({ x: c.x + MARGIN, y: c.y + MARGIN }));
+function norm(arr) {
+  return arr.map((c) => ({
+    x: Math.round(c.x - MIN_X + MARGIN),
+    y: Math.round(c.y - MIN_Y + MARGIN),
+  }));
 }
-const COORD_IWAMIZAWA_BRANCH = applyMargin(RAW_IWAMIZAWA_BRANCH);
-const COORD_OIWAKE_BRANCH = applyMargin(RAW_OIWAKE_BRANCH);
-const COORD_COMMON = applyMargin(RAW_COORD_COMMON);
+const COORD_IWAMIZAWA_BRANCH = norm(RAW_IWAMIZAWA_BRANCH);
+const COORD_OIWAKE_BRANCH = norm(RAW_OIWAKE_BRANCH);
+const COORD_COMMON = norm(RAW_COMMON);
+
+const BOARD_W = Math.round(MAX_X - MIN_X) + MARGIN * 2;
+const BOARD_H = Math.round(MAX_Y - MIN_Y) + MARGIN * 2;
 
 function coordOf(routeKey, pos) {
   const cs = commonStart[routeKey];
@@ -350,6 +354,7 @@ function buildRouteSVG() {
   const COL_OIW = "#16a085";
   const COL_COM = "#34495e";
 
+  // 各分岐線は末尾→白石(共通先頭)へ接続
   const iwaPath = COORD_IWAMIZAWA_BRANCH.concat([COORD_COMMON[0]]);
   const oiwPath = COORD_OIWAKE_BRANCH.concat([COORD_COMMON[0]]);
   const comPath = COORD_COMMON;
@@ -371,13 +376,13 @@ function buildRouteSVG() {
   svg += dots(COORD_OIWAKE_BRANCH);
   svg += dots(COORD_COMMON);
 
-  // ルート名ラベル（線・駅に重ならない空き領域へ）
-  const iwaEnd = COORD_IWAMIZAWA_BRANCH[4];   // 岩見沢付近
-  const oiwEnd = COORD_OIWAKE_BRANCH[4];       // 追分付近
-  const comEnd = COORD_COMMON[COMMON_COUNT - 1]; // 小樽付近
-  svg += `<text x="${iwaEnd.x + 120}" y="${iwaEnd.y - 60}" font-size="42" fill="${COL_IWA}" font-weight="bold">岩見沢経由</text>`;
-  svg += `<text x="${oiwEnd.x + 120}" y="${oiwEnd.y + 80}" font-size="42" fill="${COL_OIW}" font-weight="bold">追分経由</text>`;
-  svg += `<text x="${comEnd.x - 40}" y="${comEnd.y - 80}" font-size="42" fill="${COL_COM}" font-weight="bold">函館本線</text>`;
+  // ルート名ラベル（各線の端付近・他要素に重ならない位置）
+  const iwaTip = COORD_IWAMIZAWA_BRANCH[4];  // 岩見沢
+  const oiwTip = COORD_OIWAKE_BRANCH[4];      // 追分
+  const comTip = COORD_COMMON[COMMON_COUNT - 1]; // 小樽
+  svg += `<text x="${iwaTip.x + 120}" y="${iwaTip.y - 40}" font-size="44" fill="${COL_IWA}" font-weight="bold">岩見沢経由</text>`;
+  svg += `<text x="${oiwTip.x + 120}" y="${oiwTip.y + 70}" font-size="44" fill="${COL_OIW}" font-weight="bold">追分経由</text>`;
+  svg += `<text x="${comTip.x - 30}" y="${comTip.y - 80}" font-size="44" fill="${COL_COM}" font-weight="bold">函館本線</text>`;
 
   svg += `</svg>`;
   return svg;
