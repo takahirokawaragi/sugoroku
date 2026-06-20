@@ -1,17 +1,18 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.6.6
-     日付: 2026-06-21（日）05:28 JST
-     v3.6.6での変更点:
-       - 駅座標は client.js v3.6.6 が設定（沼ノ端を最下段へ・
-         追分経由の合流末尾を白石の下側に置き平和付近の重なりを解消）
-       - 構造・CSS・盤面方式は v3.6.5 から変更なし
+     バージョン: v3.7.0
+     日付: 2026-06-21（日）05:57 JST
+     v3.7.0での変更点:
+       - 左メニューを七並べ式の5席(#seats)に刷新（カラーバッジ＋
+         名前入力＋岩見沢/追分ボタン）。手番は席の枠色で表示。
+       - ルーレットを右上に単体フロート配置。直径=縦幅の50%(JSで50vh)。
+       - 上中央に「オンライン鉄道すごろく」タイトルバナーを固定表示。
+       - 統一プレイヤーカラー(P1赤/P2青/P3緑/P4オレンジ/P5紫)。
+       - 盤面・コマ・CSSの土台は v3.6.6 を維持。
      --- 以下 過去履歴 ---
-     v3.6.5: 追分経由の北上区間を縦一直線化・沼ノ端を下げ重なり軽減
-     v3.6.4: 日付ヘッダの誤りを修正（現在日時に統一）
-     v3.6.3: 駅座標・路線図形状・余白を client.js 側で白石中心に再設計
+     v3.6.6: 沼ノ端を最下段へ・合流末尾を白石下側に配置し重なり解消
      v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
-     ※ server.js v3.5 / client.js v3.6.6 とセットで使用（PC前提）
+     ※ server.js v3.5 / client.js v3.7.0 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -19,7 +20,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>みんなですごろく 〜栗山から小樽〜</title>
+  <title>オンライン鉄道すごろく</title>
   <style>
     * {
       box-sizing: border-box;
@@ -30,14 +31,7 @@
       font-family: "Hiragino Kaku Gothic ProN", "メイリオ", sans-serif;
       background: #eef3f8;
       color: #222;
-      padding: 0 12px 24px;
-    }
-
-    h1 {
-      font-size: 18px;
-      text-align: center;
-      margin: 10px 0;
-      color: #1b3a5b;
+      padding: 0;
     }
 
     button {
@@ -59,80 +53,186 @@
       cursor: default;
     }
 
-    #resetBtn {
-      background: #c0562b;
+    /* ===== 上中央 タイトルバナー（すごろくデザイン）===== */
+    .titleBanner {
+      position: fixed;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 200;
+      padding: 8px 34px;
+      border-radius: 12px;
+      background: linear-gradient(#eaf6ff, #d4ecfb);
+      border: 2px solid #bfe0f5;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, .15);
+      pointer-events: none;
     }
 
-    #resetBtn:hover {
-      background: #a3471f;
+    .titleBanner .ttl {
+      margin: 0;
+      font-size: 30px;
+      font-weight: 900;
+      letter-spacing: 2px;
+      text-align: center;
+      background: linear-gradient(#2e8b3f, #1f8b5c 60%, #176b46);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
+      -webkit-text-stroke: 2px #ffffff;
+      paint-order: stroke fill;
+      text-shadow: 0 2px 2px rgba(0, 0, 0, .12);
     }
 
+    /* ===== 左メニュー（七並べ式・フロート固定）===== */
     .fixedPanel {
       position: fixed;
-      top: 10px;
+      top: 70px;
       left: 10px;
-      width: 320px;
-      max-height: calc(100vh - 20px);
+      width: 360px;
+      max-height: calc(100vh - 80px);
       overflow-y: auto;
       background: rgba(255, 255, 255, 0.97);
       border: 2px solid #c9d6e4;
       border-radius: 14px;
-      padding: 10px 14px 12px;
+      padding: 12px;
       box-shadow: 0 4px 14px rgba(0, 0, 0, .18);
-      text-align: center;
       z-index: 100;
     }
 
-    .nameArea {
+    #seats {
       display: flex;
+      flex-direction: column;
       gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-      justify-content: center;
-      margin-bottom: 6px;
+      margin-bottom: 10px;
     }
 
-    #nameInput {
-      flex: 1 1 140px;
-      padding: 7px 10px;
+    .seat {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px;
+      border: 3px solid transparent;
+      border-radius: 10px;
+      background: #f4f7fa;
+    }
+
+    .seat.empty {
+      background: #eef0f2;
+      opacity: .7;
+    }
+
+    .seat.current {
+      /* 枠色は JS でプレイヤーカラーを指定 */
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, .05);
+    }
+
+    .seatBadge {
+      flex: 0 0 auto;
+      width: 44px;
+      height: 34px;
+      border-radius: 7px;
+      color: #fff;
+      font-weight: bold;
       font-size: 15px;
-      border: 1px solid #bbb;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: inset 0 -2px 0 rgba(0, 0, 0, .18);
+    }
+
+    .seatName {
+      flex: 1 1 auto;
+      min-width: 0;
+      padding: 7px 9px;
+      font-size: 15px;
+      border: 1px solid #9bb4cc;
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    .seatName:disabled {
+      background: #f0f2f4;
+      color: #333;
+    }
+
+    .seatRouteBtn {
+      flex: 0 0 auto;
+      padding: 7px 9px;
+      font-size: 13px;
       border-radius: 6px;
     }
 
-    #routeArea {
-      margin-bottom: 6px;
+    .seatRouteBtn.iwa {
+      background: #e67e22;
     }
 
-    #routeLabel {
-      font-size: 13px;
-      font-weight: bold;
-      color: #1b3a5b;
-      margin-bottom: 4px;
+    .seatRouteBtn.iwa:hover {
+      background: #cf6f17;
     }
 
-    .routeBtn {
-      background: #fff;
-      color: #1f8b5c;
-      border: 2px solid #1f8b5c;
-      margin: 0 3px;
-      padding: 6px 10px;
-    }
-
-    .routeBtn:hover {
-      background: #eafaf0;
-    }
-
-    .routeBtn.selected {
+    .seatRouteBtn.oiw {
       background: #1f8b5c;
-      color: #fff;
     }
 
+    .seatRouteBtn.oiw:hover {
+      background: #18764d;
+    }
+
+    .seatRouteBtn.selected {
+      outline: 3px solid #1b3a5b;
+      outline-offset: 1px;
+    }
+
+    .seatRouteBtn:disabled {
+      opacity: .55;
+    }
+
+    .btnRow {
+      display: flex;
+      gap: 8px;
+      margin-top: 4px;
+    }
+
+    #startBtn {
+      flex: 1;
+      background: #2f7d32;
+      font-weight: bold;
+    }
+
+    #startBtn:hover {
+      background: #276628;
+    }
+
+    #resetBtn {
+      flex: 1;
+      background: #d32f2f;
+      font-weight: bold;
+    }
+
+    #resetBtn:hover {
+      background: #b52626;
+    }
+
+    #status {
+      font-size: 12px;
+      color: #1b3a5b;
+      margin: 8px 2px 2px;
+      min-height: 14px;
+    }
+
+    #players {
+      font-size: 12px;
+      line-height: 1.6;
+      margin-top: 4px;
+    }
+
+    /* ===== ルーレット（右上・単体フロート固定）===== */
     #rouletteWrap {
-      position: relative;
-      width: 160px;
-      height: 174px;
-      margin: 6px auto 2px;
+      position: fixed;
+      top: 70px;
+      right: 16px;
+      z-index: 100;
+      /* width/height は JS が直径=縦幅50%で設定 */
     }
 
     #pointer {
@@ -142,49 +242,27 @@
       transform: translateX(-50%);
       width: 0;
       height: 0;
-      border-left: 10px solid transparent;
-      border-right: 10px solid transparent;
-      border-top: 16px solid #111;
+      border-left: 12px solid transparent;
+      border-right: 12px solid transparent;
+      border-top: 18px solid #111;
       z-index: 5;
     }
 
     #wheel {
       display: block;
-      width: 160px;
-      height: 160px;
-      margin: 12px auto 0;
+      margin: 14px auto 0;
       transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
     }
 
-    #status {
-      font-size: 14px;
-      font-weight: bold;
-      margin: 4px 0;
-      color: #1b3a5b;
-    }
-
-    #players {
-      font-size: 12px;
-      line-height: 1.6;
-    }
-
-    .btnRow {
-      margin-top: 6px;
-    }
-
-    .btnRow button {
-      margin: 2px;
-    }
-
+    /* ===== 盤面 ===== */
     .boardScroll {
       width: 100%;
-      height: 88vh;
+      height: 100vh;
       overflow: auto;
       padding: 0;
       scroll-behavior: smooth;
     }
 
-    /* 盤面ステージ：サイズは client.js が動的に設定（下記は仮の初期値） */
     #board {
       position: relative;
       width: 6000px;
@@ -530,15 +608,19 @@
     }
 
     #result {
-      max-width: 920px;
-      margin: 14px auto;
+      position: fixed;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      max-width: 520px;
       background: #fff;
       border-radius: 10px;
-      padding: 12px;
+      padding: 12px 20px;
       font-size: 15px;
       line-height: 1.9;
-      box-shadow: 0 2px 6px rgba(0, 0, 0, .08);
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .2);
       display: none;
+      z-index: 150;
     }
 
     #result.show {
@@ -554,32 +636,25 @@
 </head>
 
 <body>
-  <h1>みんなですごろく 〜栗山から小樽〜</h1>
+  <div class="titleBanner">
+    <h1 class="ttl">オンライン鉄道すごろく</h1>
+  </div>
 
   <div class="fixedPanel">
-    <div class="nameArea" id="nameArea">
-      <input id="nameInput" type="text" maxlength="12" placeholder="名前を入力" />
-      <button id="nameBtn">名前を決定</button>
-    </div>
-
-    <div id="routeArea">
-      <div id="routeLabel">あなたのルート：</div>
-      <button id="routeOiwakeBtn" class="routeBtn">追分経由</button>
-      <button id="routeIwamizawaBtn" class="routeBtn">岩見沢経由</button>
-    </div>
-
-    <div id="rouletteWrap">
-      <div id="pointer"></div>
-      <canvas id="wheel" width="260" height="260"></canvas>
-    </div>
-
-    <div id="status">接続中...</div>
-    <div id="players"></div>
+    <div id="seats"><!-- 5席(P1〜P5)は client.js が生成 --></div>
 
     <div class="btnRow">
       <button id="startBtn">ゲーム開始</button>
       <button id="resetBtn">リセット</button>
     </div>
+
+    <div id="status">接続中...</div>
+    <div id="players"></div>
+  </div>
+
+  <div id="rouletteWrap">
+    <div id="pointer"></div>
+    <canvas id="wheel" width="360" height="360"></canvas>
   </div>
 
   <div class="boardScroll">
