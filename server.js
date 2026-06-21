@@ -1,13 +1,15 @@
 /* =======================================================================
- * games-kawaragi  統合サーバー  server.js
- * Version: v3.9
- * Date   : 2026-06-21（日）11:00 JST
+ * オンライン鉄道すごろく  server.js
+ * Version: v4.0
+ * Date   : 2026-06-21（日）11:13 JST
  * -----------------------------------------------------------------------
- * 七並べ /7/ ・ すごろく /sugoroku/ ・ ビンゴ /bingo/ 統合
- * すごろくの席管理を「座席番号で着席・ロックする方式(joinSeat)」で運用。
- * 名前混入バグ(隣の席に同じ名前が入る/確定後も他席に書ける)を根絶。
- * 音声イベントは 'event' チャンネルで全端末同時配信。
- *   start / reset / move / goal / gameover / rank / your_turn
+ * 【重要変更 v4.0】
+ *   名前空間 '/sugoroku' を撤去し、ルート直下(io())で動作させる。
+ *   → これまで index.html が /sugoroku/client.js を読みに行き 404 になって
+ *     いた問題を根絶。client.js は public/ 直下、ソケットも既定名前空間。
+ *   席管理は座席番号で着席・ロックする方式(joinSeat)。名前混入バグ無し。
+ *   音声イベントは 'event' で全端末同時配信。
+ *     start / reset / move / goal / gameover / rank / your_turn
  * ======================================================================= */
 
 const express = require('express');
@@ -23,12 +25,7 @@ const io     = new Server(server);
 app.get('/health', (_req, res) => res.send('ok'));
 app.use(express.static(path.join(__dirname, 'public')));
 
-/* =======================================================================
- *  すごろく  ロジック  (namespace: /sugoroku)
- * ======================================================================= */
-
-// ---- 路線データ（駅名・ふりがな・ローマ字） --------------------------
-// 岩見沢ルート（栗山→栗丘→…→白石）
+/* ---- 路線データ ------------------------------------------------------- */
 const BRANCH_IWAMIZAWA = [
   { name:'栗丘',   kana:'くりおか',   roma:'Kurioka'   },
   { name:'岩見沢', kana:'いわみざわ', roma:'Iwamizawa' },
@@ -41,7 +38,6 @@ const BRANCH_IWAMIZAWA = [
   { name:'大麻',   kana:'おおあさ',   roma:'Oasa'      },
 ];
 
-// 追分ルート（栗山→由仁→…→白石）
 const BRANCH_OIWAKE = [
   { name:'由仁',   kana:'ゆに',       roma:'Yuni'      },
   { name:'追分',   kana:'おいわけ',   roma:'Oiwake'    },
@@ -53,7 +49,6 @@ const BRANCH_OIWAKE = [
   { name:'南千歳', kana:'みなみちとせ',roma:'Minamichitose'},
 ];
 
-// 共通区間（白石→…→札幌＝ゴール）
 const COMMON = [
   { name:'白石',   kana:'しろいし',   roma:'Shiroishi' },
   { name:'平和',   kana:'へいわ',     roma:'Heiwa'     },
@@ -61,28 +56,24 @@ const COMMON = [
   { name:'札幌',   kana:'さっぽろ',   roma:'Sapporo'   },
 ];
 
-// 起点（両ルート共通の出発駅＝栗山。単一の駅オブジェクトとして1つだけ持つ）
 const COMMON_START = { name:'栗山', kana:'くりやま', roma:'Kuriyama' };
 
-// ルート定義：起点(栗山) + 各分岐 + 共通区間
 const ROUTES = {
   iwamizawa: [COMMON_START, ...BRANCH_IWAMIZAWA, ...COMMON],
   oiwake   : [COMMON_START, ...BRANCH_OIWAKE,    ...COMMON],
 };
 
-// ゴールインデックス（各ルートの最終駅＝札幌）
 const GOALS = {
   iwamizawa: ROUTES.iwamizawa.length - 1,
   oiwake   : ROUTES.oiwake.length - 1,
 };
 
 const MAX_PLAYERS = 5;
-const CPU_WAIT    = 6500; // CPU自動ロール遅延(ms)
+const CPU_WAIT    = 6500;
 
-/* ---- ゲーム状態 -------------------------------------------------------- */
-// players は seat 番号(0..4)の固定スロット配列。null=空席。
+/* ---- ゲーム状態 ------------------------------------------------------- */
 let players       = new Array(MAX_PLAYERS).fill(null);
-let currentTurn   = -1;     // 現在の手番 seat 番号
+let currentTurn   = -1;
 let started       = false;
 let finished      = false;
 let finishedCount = 0;
@@ -90,24 +81,18 @@ let seqCounter    = 0;
 
 function makePlayer(seat, name, routeKey, isCPU, socketId) {
   return {
-    seat,
-    name,
-    routeKey,                 // 'iwamizawa' | 'oiwake'
+    seat, name, routeKey,
     isCPU: !!isCPU,
     socketId: socketId || null,
-    pos: 0,                   // ルート上のインデックス(0=栗山)
-    locked: true,             // 着席=ロック
+    pos: 0,
+    locked: true,
     finishedFlag: false,
-    rank: 0,                  // 着順(1..5)。0=未ゴール
+    rank: 0,
     seq: ++seqCounter,
   };
 }
 
-function seatedPlayers() {
-  return players.filter(p => p !== null);
-}
-
-// 着席している(=null以外)プレイヤーの seat 番号を昇順で返す
+function seatedPlayers() { return players.filter(p => p !== null); }
 function seatOrder() {
   const arr = [];
   for (let i = 0; i < MAX_PLAYERS; i++) if (players[i]) arr.push(i);
@@ -115,125 +100,73 @@ function seatOrder() {
 }
 
 /* ---- 状態ブロードキャスト -------------------------------------------- */
-function broadcastState(nsp) {
+function broadcastState() {
   const seats = players.map((p, seat) => {
     if (!p) return { seat, occupied:false };
     return {
-      seat,
-      occupied: true,
-      name: p.name,
-      routeKey: p.routeKey,
-      isCPU: p.isCPU,
-      pos: p.pos,
-      stationName: ROUTES[p.routeKey][p.pos].name,
-      finishedFlag: p.finishedFlag,
-      rank: p.rank,
+      seat, occupied:true,
+      name: p.name, routeKey: p.routeKey, isCPU: p.isCPU,
+      pos: p.pos, stationName: ROUTES[p.routeKey][p.pos].name,
+      finishedFlag: p.finishedFlag, rank: p.rank,
     };
   });
-
-  nsp.emit('state', {
-    seats,
-    currentTurn,            // seat 番号
-    started,
-    finished,
-    finishedCount,
-    routes: {               // クライアント描画用にルート定義も送る
-      iwamizawa: ROUTES.iwamizawa,
-      oiwake   : ROUTES.oiwake,
-      goals    : GOALS,
-      commonStartIndex: 0,
-    },
+  io.emit('state', {
+    seats, currentTurn, started, finished, finishedCount,
+    routes: { iwamizawa: ROUTES.iwamizawa, oiwake: ROUTES.oiwake,
+              goals: GOALS, commonStartIndex: 0 },
   });
 }
 
 /* ---- リセット --------------------------------------------------------- */
-function clearAll() {
-  players       = new Array(MAX_PLAYERS).fill(null);
-  currentTurn   = -1;
-  started       = false;
-  finished      = false;
-  finishedCount = 0;
-}
-
-function resetGame(nsp) {
-  // 着席情報(席ロック)は維持し、進行状態だけ初期化する
-  for (const p of seatedPlayers()) {
-    p.pos          = 0;
-    p.finishedFlag = false;
-    p.rank         = 0;
-  }
-  currentTurn   = -1;
-  started       = false;
-  finished      = false;
-  finishedCount = 0;
-  broadcastState(nsp);
+function resetGame() {
+  for (const p of seatedPlayers()) { p.pos=0; p.finishedFlag=false; p.rank=0; }
+  currentTurn = -1; started = false; finished = false; finishedCount = 0;
+  broadcastState();
 }
 
 /* ---- ゲーム開始 ------------------------------------------------------- */
-function startGame(nsp) {
+function startGame() {
   if (started) return;
-
-  // 空席を CPU で補充（最大5名まで）
   for (let seat = 0; seat < MAX_PLAYERS; seat++) {
     if (!players[seat]) {
       const routeKey = (seat % 2 === 0) ? 'iwamizawa' : 'oiwake';
       players[seat] = makePlayer(seat, `CPU${seat + 1}`, routeKey, true, null);
     }
   }
-
-  // 状態初期化
-  for (const p of seatedPlayers()) {
-    p.pos          = 0;
-    p.finishedFlag = false;
-    p.rank         = 0;
-  }
-
-  started       = true;
-  finished      = false;
-  finishedCount = 0;
-
-  // 最初の手番＝着席順の先頭 seat
+  for (const p of seatedPlayers()) { p.pos=0; p.finishedFlag=false; p.rank=0; }
+  started = true; finished = false; finishedCount = 0;
   const order = seatOrder();
   currentTurn = order.length ? order[0] : -1;
-
-  broadcastState(nsp);
-  notifyTurn(nsp);
-  maybeRunCPU(nsp);
+  broadcastState();
+  notifyTurn();
+  maybeRunCPU();
 }
 
-/* ---- 手番通知（自分の番の人にだけ your_turn を鳴らす） -------------- */
-function notifyTurn(nsp) {
+/* ---- 手番通知（自分の番の人にだけ your_turn） ----------------------- */
+function notifyTurn() {
   if (currentTurn < 0) return;
   const p = players[currentTurn];
   if (!p) return;
-  if (!p.isCPU && p.socketId) {
-    nsp.to(p.socketId).emit('event', { type:'your_turn' });
-  }
+  if (!p.isCPU && p.socketId) io.to(p.socketId).emit('event', { type:'your_turn' });
 }
 
 /* ---- 手番送り --------------------------------------------------------- */
-function advanceTurn(nsp) {
-  const order = seatOrder().filter(seat => !players[seat].finishedFlag);
-  if (order.length === 0) {
-    finished = true;
-    currentTurn = -1;
-    broadcastState(nsp);
-    return;
-  }
-
+function advanceTurn() {
+  const remain = seatOrder().filter(seat => !players[seat].finishedFlag);
+  if (remain.length === 0) { finished = true; currentTurn = -1; broadcastState(); return; }
   let next = -1;
   for (let step = 1; step <= MAX_PLAYERS; step++) {
     const cand = (currentTurn + step) % MAX_PLAYERS;
     if (players[cand] && !players[cand].finishedFlag) { next = cand; break; }
   }
   currentTurn = next;
-  broadcastState(nsp);
-  notifyTurn(nsp);
-  maybeRunCPU(nsp);
+  broadcastState();
+  notifyTurn();
+  maybeRunCPU();
 }
 
-/* ---- サイコロ(ルーレット)結果適用 ------------------------------------ */
-function applyRoll(nsp, seat, value) {
+/* ---- ルーレット結果適用 ---------------------------------------------- */
+function applyRoll(seat, value) {
   if (!started || finished) return;
   if (seat !== currentTurn) return;
   const p = players[seat];
@@ -241,99 +174,76 @@ function applyRoll(nsp, seat, value) {
 
   const goalIdx = GOALS[p.routeKey];
   let np = p.pos + value;
-  if (np >= goalIdx) np = goalIdx; // 到達でゴール
+  if (np >= goalIdx) np = goalIdx;
   p.pos = np;
 
-  // コマ移動音
-  nsp.emit('event', { type:'move' });
+  io.emit('event', { type:'move' });
 
-  // ゴール判定
   if (p.pos >= goalIdx) {
     p.finishedFlag = true;
     finishedCount += 1;
     p.rank = finishedCount;
-
     const totalSeated = seatedPlayers().length;
     if (finishedCount >= totalSeated) {
-      // 最後のプレイヤーがゴール → goal + gameover を同時
-      nsp.emit('event', { type:'goal' });
-      nsp.emit('event', { type:'gameover' });
+      io.emit('event', { type:'goal' });
+      io.emit('event', { type:'gameover' });
       finished = true;
     } else {
-      // 1〜4位 → rank
-      nsp.emit('event', { type:'rank', rank:p.rank });
+      io.emit('event', { type:'rank', rank:p.rank });
     }
   }
 
-  broadcastState(nsp);
-
-  if (!finished) {
-    advanceTurn(nsp);
-  } else {
-    currentTurn = -1;
-    broadcastState(nsp);
-  }
+  broadcastState();
+  if (!finished) advanceTurn();
+  else { currentTurn = -1; broadcastState(); }
 }
 
 /* ---- CPU 自動進行 ----------------------------------------------------- */
-function maybeRunCPU(nsp) {
-  if (!started || finished) return;
-  if (currentTurn < 0) return;
+function maybeRunCPU() {
+  if (!started || finished || currentTurn < 0) return;
   const p = players[currentTurn];
   if (!p || !p.isCPU || p.finishedFlag) return;
-
   setTimeout(() => {
-    if (!started || finished) return;
-    if (currentTurn < 0) return;
+    if (!started || finished || currentTurn < 0) return;
     const cur = players[currentTurn];
     if (!cur || !cur.isCPU || cur.finishedFlag) return;
     const value = 1 + Math.floor(Math.random() * 6);
-    nsp.emit('cpuRoll', { seat:currentTurn, value });
-    applyRoll(nsp, currentTurn, value);
+    io.emit('cpuRoll', { seat:currentTurn, value });
+    applyRoll(currentTurn, value);
   }, CPU_WAIT);
 }
 
-/* ---- Socket.IO  /sugoroku ------------------------------------------- */
-const sugoroku = io.of('/sugoroku');
+/* ---- Socket.IO（既定名前空間） -------------------------------------- */
+io.on('connection', (socket) => {
+  broadcastState();
 
-sugoroku.on('connection', (socket) => {
-  // 接続直後に現状を送る
-  broadcastState(sugoroku);
-
-  // 着席：座席番号・名前・ルートを同時に確定（席ロック方式）
   socket.on('joinSeat', ({ seat, name, routeKey }) => {
-    if (started) return; // ゲーム中は着席不可
+    if (started) return;
     seat = Number(seat);
     if (!(seat >= 0 && seat < MAX_PLAYERS)) return;
-    if (players[seat]) return;            // 既に使用中 → 拒否
+    if (players[seat]) return;
     if (!name || !String(name).trim()) return;
     if (routeKey !== 'iwamizawa' && routeKey !== 'oiwake') return;
-
-    // 同一ソケットが既に他席に座っていれば、その席を空ける（席替え）
     for (let i = 0; i < MAX_PLAYERS; i++) {
       if (players[i] && players[i].socketId === socket.id) players[i] = null;
     }
-
     players[seat] = makePlayer(seat, String(name).trim(), routeKey, false, socket.id);
-    broadcastState(sugoroku);
+    broadcastState();
   });
 
-  // 着席解除（明示的に席を立つ場合）
   socket.on('leaveSeat', () => {
     if (started) return;
     for (let i = 0; i < MAX_PLAYERS; i++) {
       if (players[i] && players[i].socketId === socket.id) players[i] = null;
     }
-    broadcastState(sugoroku);
+    broadcastState();
   });
 
-  // ゲーム開始
   socket.on('start', () => {
-    sugoroku.emit('event', { type:'start' }); // start.wav を全端末で
-    startGame(sugoroku);
+    io.emit('event', { type:'start' });
+    startGame();
   });
 
-  // ルーレット結果（人間プレイヤー）
   socket.on('roll', ({ value }) => {
     let seat = -1;
     for (let i = 0; i < MAX_PLAYERS; i++) {
@@ -342,40 +252,32 @@ sugoroku.on('connection', (socket) => {
     if (seat < 0) return;
     const v = Number(value);
     if (!(v >= 1 && v <= 6)) return;
-    applyRoll(sugoroku, seat, v);
+    applyRoll(seat, v);
   });
 
-  // リセット
   socket.on('reset', () => {
-    sugoroku.emit('event', { type:'reset' }); // reset.wav を全端末で
-    resetGame(sugoroku);
+    io.emit('event', { type:'reset' });
+    resetGame();
   });
 
-  // 切断
   socket.on('disconnect', () => {
     let changed = false;
     for (let i = 0; i < MAX_PLAYERS; i++) {
       if (players[i] && players[i].socketId === socket.id) {
         if (started) {
-          // ゲーム中の離脱は CPU 化して進行を止めない
-          players[i].isCPU    = true;
-          players[i].socketId = null;
-          changed = true;
-          if (currentTurn === i) {
-            maybeRunCPU(sugoroku);
-          }
+          players[i].isCPU = true; players[i].socketId = null; changed = true;
+          if (currentTurn === i) maybeRunCPU();
         } else {
-          players[i] = null;
-          changed = true;
+          players[i] = null; changed = true;
         }
       }
     }
-    if (changed) broadcastState(sugoroku);
+    if (changed) broadcastState();
   });
 });
 
 /* ---- 起動 ------------------------------------------------------------- */
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`[games-kawaragi] server.js v3.9 listening on ${PORT}  (2026-06-21 11:00 JST)`);
+  console.log(`[sugoroku] server.js v4.0 listening on ${PORT}  (2026-06-21 11:13 JST)`);
 });

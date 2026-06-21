@@ -1,101 +1,68 @@
 /* =======================================================================
  * オンライン鉄道すごろく  client.js
- * Version: v3.9
- * Date   : 2026-06-21（日）11:00 JST
+ * Version: v4.0
+ * Date   : 2026-06-21（日）11:13 JST
  * -----------------------------------------------------------------------
- * - 席UI=七並べ式(joinSeat方式)。名前入力＋ルート確定までは全ボタン グレー。
- *   確定すると「選んだ席バッジ」と「確定したルートボタン」だけ色付き、
- *   他席・他ルートはグレー。確定後は自席のみロック、他席へ書けない。
- * - 名前混入バグ解消(seat番号で着席するためサーバー側で混入しない)。
- * - 手番枠はサーバーの currentTurn(seat番号)に厳密同期。
- * - 駅マスは栗山を1つだけ生成(分裂バグ修正)。栗山↔栗丘/由仁の距離を拡大。
- * - 駅位置一覧/最終順位表示は撤去。
- * - 効果音:
- *     move      -> train.mp3
- *     goal+gameover(同時) -> 最後のプレイヤーゴール
- *     rank      -> 1〜4位ゴール
- *     reset     -> reset.wav
- *     start     -> start.wav
- *     your_turn -> 自分の番(サーバーが自分にだけ送信) your_turn.wav
- *     roll(連続)-> roll.mp3 を回転速度に合わせて連続再生
- * ※ server.js v3.9 / index.html v3.9 とセット
+ * 【重要修正 v4.0】
+ *   ソケット接続を既定名前空間 io() に変更（/sugoroku 撤去）。
+ *   これにより index.html からは client.js?v=4.0 を読むだけで動作する。
+ *   席UI=七並べ式(joinSeat)。手番枠/コマは seat 番号に厳密同期。
+ *   栗山は1つだけ生成(分裂バグ修正)・始点間隔拡大。位置一覧/順位表示撤去。
+ *   効果音 move=train / goal+gameover同時 / rank / reset / start / your_turn
+ *   roll.mp3 は回転速度に合わせて連続再生。
+ * ※ server.js v4.0 / index.html v4.0 とセット
  * ======================================================================= */
 
 (function(){
 'use strict';
 
-const socket = io('/sugoroku');
+const socket = io();   // ★ 既定名前空間（/sugoroku は使わない）
 
-/* ---- プレイヤーカラー（七並べ統一） --------------------------------- */
 const COLORS = ['#e53935','#1e88e5','#43a047','#fb8c00','#8e24aa'];
 const MAX = 5;
 
-/* ---- 盤面レイアウト定数 --------------------------------------------- */
-const MARGIN  = 1800;   // 最外周駅の外側余白（端でも中央追従できるよう拡大）
-const STEP    = 150;    // 駅マス間の基本ピッチ
-const START_GAP = 260;  // 栗山→栗丘 / 栗山→由仁 の距離を広く取る（要望対応）
+const MARGIN  = 1800;
+const STEP    = 150;
+const START_GAP = 260;
 
 /* ---- サウンド ------------------------------------------------------- */
 const SND_DIR = '/sounds/';
-function makeAudio(file){
-  const a = new Audio(SND_DIR + file);
-  a.preload = 'auto';
-  return a;
-}
-const sndTrain    = makeAudio('train.mp3');     // コマ移動
-const sndGoal     = makeAudio('goal.mp3');      // 最後のゴール
-const sndGameover = makeAudio('gameover.wav');  // 最後のゴール(同時)
-const sndRank     = makeAudio('rank.mp3');      // 1〜4位
-const sndReset    = makeAudio('reset.wav');     // リセット
-const sndStart    = makeAudio('start.wav');     // 開始
-const sndYourTurn = makeAudio('your_turn.wav'); // 自分の番
+function makeAudio(file){ const a = new Audio(SND_DIR + file); a.preload='auto'; return a; }
+const sndTrain    = makeAudio('train.mp3');
+const sndGoal     = makeAudio('goal.mp3');
+const sndGameover = makeAudio('gameover.wav');
+const sndRank     = makeAudio('rank.mp3');
+const sndReset    = makeAudio('reset.wav');
+const sndStart    = makeAudio('start.wav');
+const sndYourTurn = makeAudio('your_turn.wav');
 
-function play(a){
-  if(!a) return;
-  try{ a.currentTime = 0; a.play().catch(()=>{}); }catch(e){}
-}
+function play(a){ if(!a) return; try{ a.currentTime=0; a.play().catch(()=>{}); }catch(e){} }
 function stopAll(){
   [sndTrain,sndGoal,sndGameover,sndRank,sndStart,sndYourTurn].forEach(a=>{
-    try{ a.pause(); a.currentTime = 0; }catch(e){}
+    try{ a.pause(); a.currentTime=0; }catch(e){}
   });
   stopRollLoop();
 }
 
-/* ---- roll.mp3 連続再生（ルーレット回転中、速度に合わせ間隔可変） --- */
-let rollTimer = null;
-let rolling   = false;
+/* ---- roll.mp3 連続再生 --------------------------------------------- */
+let rollTimer = null, rolling = false, rollIdx = 0;
 const sndRollPool = [makeAudio('roll.mp3'),makeAudio('roll.mp3'),makeAudio('roll.mp3'),makeAudio('roll.mp3')];
-let rollIdx = 0;
 function playRollOnce(){
-  try{
-    const a = sndRollPool[rollIdx];
-    rollIdx = (rollIdx + 1) % sndRollPool.length;
-    a.currentTime = 0; a.play().catch(()=>{});
-  }catch(e){}
+  try{ const a=sndRollPool[rollIdx]; rollIdx=(rollIdx+1)%sndRollPool.length;
+       a.currentTime=0; a.play().catch(()=>{}); }catch(e){}
 }
 function startRollLoop(){
-  if(rolling) return;
-  rolling = true;
-  let interval = 45;            // 開始時は速い(45ms間隔)
-  const tick = ()=>{
-    if(!rolling) return;
-    playRollOnce();
-    interval += interval * 0.06 + 1.5; // 徐々に間隔を広げる(減速感)
-    if(interval > 320) interval = 320;
-    rollTimer = setTimeout(tick, interval);
-  };
+  if(rolling) return; rolling=true;
+  let interval=45;
+  const tick=()=>{ if(!rolling) return; playRollOnce();
+    interval += interval*0.06 + 1.5; if(interval>320) interval=320;
+    rollTimer=setTimeout(tick, interval); };
   tick();
 }
-function stopRollLoop(){
-  rolling = false;
-  if(rollTimer){ clearTimeout(rollTimer); rollTimer = null; }
-}
+function stopRollLoop(){ rolling=false; if(rollTimer){ clearTimeout(rollTimer); rollTimer=null; } }
 
 /* ---- 状態 ----------------------------------------------------------- */
-let state    = null;   // 直近の server state
-let mySeat   = -1;     // 自分の着席 seat（未着席=-1）
-let myConfirmed = false;
-let pendingJoin = null;
+let state=null, mySeat=-1, myConfirmed=false, pendingJoin=null, layout=null;
 
 /* ---- DOM ------------------------------------------------------------ */
 const seatsEl  = document.getElementById('seats');
@@ -105,473 +72,286 @@ const btnStart = document.getElementById('btnStart');
 const btnReset = document.getElementById('btnReset');
 const wheel    = document.getElementById('wheel');
 
-/* ======================================================================
- *  席UI 構築（七並べ式）
- * ==================================================================== */
+/* ---- 席UI 構築 ----------------------------------------------------- */
 function buildSeats(){
-  seatsEl.innerHTML = '';
+  seatsEl.innerHTML='';
   for(let seat=0; seat<MAX; seat++){
-    const row = document.createElement('div');
-    row.className = 'seatRow';
-    row.dataset.seat = seat;
-
-    const badge = document.createElement('div');
-    badge.className = 'seatBadge';
-    badge.textContent = 'P' + (seat+1);
-
-    const name = document.createElement('input');
-    name.className = 'seatName';
-    name.type = 'text';
-    name.placeholder = '名前';
-    name.maxLength = 8;
-
-    const routeBtns = document.createElement('div');
-    routeBtns.className = 'routeBtns';
-    const bIwa = document.createElement('button');
-    bIwa.className = 'routeBtn iwamizawa';
-    bIwa.textContent = '岩見沢';
-    const bOi = document.createElement('button');
-    bOi.className = 'routeBtn oiwake';
-    bOi.textContent = '追分';
-    const rank = document.createElement('span');
-    rank.className = 'seatRank';
-
-    routeBtns.appendChild(bIwa);
-    routeBtns.appendChild(bOi);
-    routeBtns.appendChild(rank);
-
-    row.appendChild(badge);
-    row.appendChild(name);
-    row.appendChild(routeBtns);
+    const row=document.createElement('div'); row.className='seatRow'; row.dataset.seat=seat;
+    const badge=document.createElement('div'); badge.className='seatBadge'; badge.textContent='P'+(seat+1);
+    const name=document.createElement('input'); name.className='seatName'; name.type='text';
+    name.placeholder='名前'; name.maxLength=8;
+    const routeBtns=document.createElement('div'); routeBtns.className='routeBtns';
+    const bIwa=document.createElement('button'); bIwa.className='routeBtn iwamizawa'; bIwa.textContent='岩見沢';
+    const bOi=document.createElement('button'); bOi.className='routeBtn oiwake'; bOi.textContent='追分';
+    const rank=document.createElement('span'); rank.className='seatRank';
+    routeBtns.appendChild(bIwa); routeBtns.appendChild(bOi); routeBtns.appendChild(rank);
+    row.appendChild(badge); row.appendChild(name); row.appendChild(routeBtns);
     seatsEl.appendChild(row);
-
     bIwa.addEventListener('click', ()=> tryJoin(seat, name.value, 'iwamizawa'));
     bOi .addEventListener('click', ()=> tryJoin(seat, name.value, 'oiwake'));
   }
 }
 function tryJoin(seat, name, routeKey){
-  if(state && state.started) return;          // ゲーム中は不可
-  if(mySeat >= 0 && mySeat !== seat) return;   // 既に別席に着席済みなら不可
-  const n = (name||'').trim();
+  if(state && state.started) return;
+  if(mySeat>=0 && mySeat!==seat) return;
+  const n=(name||'').trim();
   if(!n){ alert('名前を入力してください'); return; }
-  pendingJoin = { seat, name:n, routeKey };
+  pendingJoin={ seat, name:n, routeKey };
   socket.emit('joinSeat', { seat, name:n, routeKey });
 }
 
-/* ======================================================================
- *  席UI 反映（確定状態に応じてグレー/色付け・ロック）
- * ==================================================================== */
+/* ---- 席UI 反映 ----------------------------------------------------- */
 function renderSeats(){
   if(!state) return;
-  const rows = seatsEl.querySelectorAll('.seatRow');
-
+  const rows=seatsEl.querySelectorAll('.seatRow');
   rows.forEach((row, seat)=>{
-    const info  = state.seats[seat];
-    const badge = row.querySelector('.seatBadge');
-    const name  = row.querySelector('.seatName');
-    const bIwa  = row.querySelector('.routeBtn.iwamizawa');
-    const bOi   = row.querySelector('.routeBtn.oiwake');
-    const rank  = row.querySelector('.seatRank');
+    const info=state.seats[seat];
+    const badge=row.querySelector('.seatBadge');
+    const name=row.querySelector('.seatName');
+    const bIwa=row.querySelector('.routeBtn.iwamizawa');
+    const bOi =row.querySelector('.routeBtn.oiwake');
+    const rank=row.querySelector('.seatRank');
+    const occupied=info && info.occupied;
+    const isMine=occupied && (seat===mySeat);
 
-    const occupied = info && info.occupied;
-    const isMine   = occupied && (seat === mySeat);
-
-    // バッジ：確定(occupied)した席だけ色付き、他はグレー
     badge.classList.toggle('on', !!occupied);
-
-    // ルートボタン：確定済みなら「確定したルートだけ」色付き
-    bIwa.classList.remove('on');
-    bOi.classList.remove('on');
+    bIwa.classList.remove('on'); bOi.classList.remove('on');
     if(occupied){
-      if(info.routeKey === 'iwamizawa') bIwa.classList.add('on');
-      if(info.routeKey === 'oiwake')    bOi.classList.add('on');
+      if(info.routeKey==='iwamizawa') bIwa.classList.add('on');
+      if(info.routeKey==='oiwake')    bOi.classList.add('on');
     }
+    if(occupied){ name.value=info.name; name.disabled=true; }
+    else{ name.disabled=(state.started)||(mySeat>=0); }
 
-    // 名前欄
-    if(occupied){
-      name.value = info.name;
-      name.disabled = true;                 // 確定後はロック（他席にも書けない）
-    }else{
-      // 自分が他席に着席済み or ゲーム中なら空席もロック
-      name.disabled = (state.started) || (mySeat >= 0);
-    }
+    const canOperate=!state.started && mySeat<0 && !occupied;
+    bIwa.disabled=!canOperate; bOi.disabled=!canOperate;
+    if(isMine){ bIwa.disabled=true; bOi.disabled=true; }
 
-    // ボタンの活性：未確定かつ自分が未着席かつ未開始のときだけ押せる
-    const canOperate = !state.started && mySeat < 0 && !occupied;
-    bIwa.disabled = !canOperate;
-    bOi.disabled  = !canOperate;
-    // 自席（確定済み）のボタンは「確定表示」として無効化（色は残す）
-    if(isMine){ bIwa.disabled = true; bOi.disabled = true; }
-
-    // 手番枠
-    row.classList.toggle('turn', state.started && state.currentTurn === seat);
-
-    // 着順表示（追分ボタン横）
-    rank.textContent = (occupied && info.rank > 0) ? (info.rank + '位') : '';
+    row.classList.toggle('turn', state.started && state.currentTurn===seat);
+    rank.textContent=(occupied && info.rank>0) ? (info.rank+'位') : '';
   });
-
-  // 開始ボタン：ゲーム中はグレーアウト
-  btnStart.disabled = !!state.started;
+  btnStart.disabled=!!state.started;
 }
 
-/* ======================================================================
- *  盤面構築（栗山を1つだけ生成＝分裂バグ修正 / 始点間隔を拡大）
- * ==================================================================== */
-let layout = null;
-
+/* ---- 盤面構築 ------------------------------------------------------ */
 function buildLayout(routes){
-  const iwa = routes.iwamizawa; // [栗山, 栗丘.., 白石, 平和, 苗穂, 札幌]
-  const oi  = routes.oiwake;    // [栗山, 由仁.., 白石, 平和, 苗穂, 札幌]
-
-  const commonLen = 4; // 白石,平和,苗穂,札幌
-  const iwaBranchLen = iwa.length - 1 - commonLen; // 栗丘..大麻
-  const oiBranchLen  = oi.length  - 1 - commonLen; // 由仁..南千歳
-
-  const stations = [];
-  const byKey = {};
-  const addStation = (key, s, x, y, extra) => {
-    if(byKey[key]) return byKey[key]; // 既存なら再利用（栗山/共通区間の二重生成防止）
-    const st = Object.assign({ key, name:s.name, kana:s.kana, x, y,
-      band: s.roma || '', isStart:false, isGoal:false }, extra||{});
-    stations.push(st); byKey[key] = st; return st;
+  const iwa=routes.iwamizawa, oi=routes.oiwake;
+  const commonLen=4;
+  const iwaBranchLen=iwa.length-1-commonLen;
+  const oiBranchLen =oi.length -1-commonLen;
+  const stations=[]; const byKey={};
+  const addStation=(key,s,x,y,extra)=>{
+    if(byKey[key]) return byKey[key];
+    const st=Object.assign({ key, name:s.name, kana:s.kana, x, y,
+      band:s.roma||'', isStart:false, isGoal:false }, extra||{});
+    stations.push(st); byKey[key]=st; return st;
   };
-
-  const baseX = MARGIN + 200;
-  const baseY = MARGIN + 600;
-
-  // --- 起点：栗山（ただ1つ） ---
+  const baseX=MARGIN+200, baseY=MARGIN+600;
   addStation('kuriyama', iwa[0], baseX, baseY, { isStart:true });
 
-  // --- 岩見沢ルート（栗山の上方向へ。栗山→栗丘は START_GAP で離す） ---
-  for(let i=1; i<=iwaBranchLen; i++){
-    const s = iwa[i];
-    const y = baseY - sumGap(1, i);
-    addStation('iwa_'+i, s, baseX, y);
+  for(let i=1;i<=iwaBranchLen;i++){
+    const y=baseY-sumGap(1,i);
+    addStation('iwa_'+i, iwa[i], baseX, y);
   }
-
-  // --- 追分ルート（栗山の右下方向へ。栗山→由仁は START_GAP で離す） ---
-  for(let i=1; i<=oiBranchLen; i++){
-    const s = oi[i];
-    const d = sumGap(1, i);
-    const x = baseX + d * 0.72;
-    const y = baseY + d * 0.72;
-    addStation('oi_'+i, s, x, y);
+  for(let i=1;i<=oiBranchLen;i++){
+    const d=sumGap(1,i);
+    addStation('oi_'+i, oi[i], baseX+d*0.72, baseY+d*0.72);
   }
-
-  // --- 合流点(白石)以降：共通区間。両ルートの末尾を1度だけ配置 ---
-  const commonStartIdx = iwa.length - commonLen; // 白石のindex
-  const cx = baseX + 480;
-  const cy = baseY - sumGap(1, iwaBranchLen) - 220;
-  for(let c=0; c<commonLen; c++){
-    const s = iwa[commonStartIdx + c]; // 白石,平和,苗穂,札幌（共通）
-    const x = cx + c * STEP;
-    const y = cy - c * 40;
-    const isGoal = (c === commonLen - 1);
-    addStation('common_'+c, s, x, y, { isGoal });
+  const commonStartIdx=iwa.length-commonLen;
+  const cx=baseX+480, cy=baseY-sumGap(1,iwaBranchLen)-220;
+  for(let c=0;c<commonLen;c++){
+    const isGoal=(c===commonLen-1);
+    addStation('common_'+c, iwa[commonStartIdx+c], cx+c*STEP, cy-c*40, { isGoal });
   }
-
-  let maxX=0, maxY=0;
+  let maxX=0,maxY=0;
   stations.forEach(s=>{ maxX=Math.max(maxX,s.x); maxY=Math.max(maxY,s.y); });
-  const width  = maxX + MARGIN;
-  const height = maxY + MARGIN;
-
-  layout = { stations, byKey, width, height,
-             commonStartIdx, iwaBranchLen, oiBranchLen, commonLen };
+  layout={ stations, byKey, width:maxX+MARGIN, height:maxY+MARGIN,
+           commonStartIdx, iwaBranchLen, oiBranchLen, commonLen };
   return layout;
 }
-function sumGap(from, to){
-  // from..to 区間の累積距離。最初の1ステップだけ START_GAP。
-  let d = 0;
-  for(let k=from; k<=to; k++){ d += (k===1) ? START_GAP : STEP; }
-  return d;
+function sumGap(from,to){ let d=0; for(let k=from;k<=to;k++){ d+=(k===1)?START_GAP:STEP; } return d; }
+
+function stationKeyFor(routeKey,pos){
+  const route=state.routes[routeKey];
+  const commonLen=layout.commonLen;
+  const commonStartIdx=route.length-commonLen;
+  if(pos===0) return 'kuriyama';
+  if(pos>=commonStartIdx) return 'common_'+(pos-commonStartIdx);
+  return (routeKey==='iwamizawa') ? ('iwa_'+pos) : ('oi_'+pos);
 }
 
-// ルート上の (routeKey,pos) → station.key を解決
-function stationKeyFor(routeKey, pos){
-  const route = state.routes[routeKey];
-  const commonLen = layout.commonLen;
-  const commonStartIdx = route.length - commonLen;
-  if(pos === 0) return 'kuriyama';
-  if(pos >= commonStartIdx) return 'common_' + (pos - commonStartIdx);
-  return (routeKey === 'iwamizawa') ? ('iwa_'+pos) : ('oi_'+pos);
-}
-
-/* ---- 盤面描画 ------------------------------------------------------- */
 function renderBoard(){
   if(!state || !state.routes) return;
   if(!layout) buildLayout(state.routes);
-
-  boardEl.style.width  = layout.width  + 'px';
-  boardEl.style.height = layout.height + 'px';
-  boardEl.innerHTML = '';
-
-  const svg = drawLines();
-  boardEl.appendChild(svg);
-
+  boardEl.style.width=layout.width+'px';
+  boardEl.style.height=layout.height+'px';
+  boardEl.innerHTML='';
+  boardEl.appendChild(drawLines());
   for(const st of layout.stations){
-    const wrap = document.createElement('div');
-    wrap.className = 'station';
-    wrap.style.left = st.x + 'px';
-    wrap.style.top  = st.y + 'px';
-
-    const sign = document.createElement('div');
-    sign.className = 'stSign';
-    if(st.isStart){
-      const b = document.createElement('div'); b.className='stStart';
-      b.textContent='START'; sign.appendChild(b);
-    }
-    if(st.isGoal){
-      const b = document.createElement('div'); b.className='stGoal';
-      b.textContent='GOAL'; sign.appendChild(b);
-    }
-    const nm = document.createElement('div'); nm.className='stName'; nm.textContent=st.name;
-    const kn = document.createElement('div'); kn.className='stKana'; kn.textContent=st.kana;
-    const bd = document.createElement('div'); bd.className='stBand'; bd.textContent=st.band;
+    const wrap=document.createElement('div'); wrap.className='station';
+    wrap.style.left=st.x+'px'; wrap.style.top=st.y+'px';
+    const sign=document.createElement('div'); sign.className='stSign';
+    if(st.isStart){ const b=document.createElement('div'); b.className='stStart'; b.textContent='START'; sign.appendChild(b); }
+    if(st.isGoal){ const b=document.createElement('div'); b.className='stGoal'; b.textContent='GOAL'; sign.appendChild(b); }
+    const nm=document.createElement('div'); nm.className='stName'; nm.textContent=st.name;
+    const kn=document.createElement('div'); kn.className='stKana'; kn.textContent=st.kana;
+    const bd=document.createElement('div'); bd.className='stBand'; bd.textContent=st.band;
     sign.appendChild(nm); sign.appendChild(kn); sign.appendChild(bd);
-
-    const pieces = document.createElement('div');
-    pieces.className = 'stPieces';
-    pieces.dataset.key = st.key;
-
-    wrap.appendChild(sign);
-    wrap.appendChild(pieces);
+    const pieces=document.createElement('div'); pieces.className='stPieces'; pieces.dataset.key=st.key;
+    wrap.appendChild(sign); wrap.appendChild(pieces);
     boardEl.appendChild(wrap);
   }
-
   placePieces();
 }
 
 function drawLines(){
-  const svgNS = 'http://www.w3.org/2000/svg';
-  const svg = document.createElementNS(svgNS,'svg');
+  const svgNS='http://www.w3.org/2000/svg';
+  const svg=document.createElementNS(svgNS,'svg');
   svg.setAttribute('class','routeLayer');
   svg.setAttribute('width', layout.width);
   svg.setAttribute('height', layout.height);
-
-  const drawPath = (keys, color)=>{
-    let d = '';
-    keys.forEach((k,i)=>{
-      const s = layout.byKey[k]; if(!s) return;
-      d += (i===0?'M':'L') + s.x + ' ' + s.y + ' ';
-    });
-    const p = document.createElementNS(svgNS,'path');
+  const drawPath=(keys,color)=>{
+    let d='';
+    keys.forEach((k,i)=>{ const s=layout.byKey[k]; if(!s) return;
+      d+=(i===0?'M':'L')+s.x+' '+s.y+' '; });
+    const p=document.createElementNS(svgNS,'path');
     p.setAttribute('d', d.trim());
-    p.setAttribute('fill','none');
-    p.setAttribute('stroke', color);
-    p.setAttribute('stroke-width','10');
-    p.setAttribute('stroke-linecap','round');
-    p.setAttribute('stroke-linejoin','round');
-    p.setAttribute('opacity','0.55');
+    p.setAttribute('fill','none'); p.setAttribute('stroke',color);
+    p.setAttribute('stroke-width','10'); p.setAttribute('stroke-linecap','round');
+    p.setAttribute('stroke-linejoin','round'); p.setAttribute('opacity','0.55');
     svg.appendChild(p);
   };
-
-  const iwaKeys = ['kuriyama'];
+  const iwaKeys=['kuriyama'];
   for(let i=1;i<=layout.iwaBranchLen;i++) iwaKeys.push('iwa_'+i);
   for(let c=0;c<layout.commonLen;c++) iwaKeys.push('common_'+c);
-  drawPath(iwaKeys, '#2f80c4');
-
-  const oiKeys = ['kuriyama'];
+  drawPath(iwaKeys,'#2f80c4');
+  const oiKeys=['kuriyama'];
   for(let i=1;i<=layout.oiBranchLen;i++) oiKeys.push('oi_'+i);
   for(let c=0;c<layout.commonLen;c++) oiKeys.push('common_'+c);
-  drawPath(oiKeys, '#c46a1f');
-
+  drawPath(oiKeys,'#c46a1f');
   return svg;
 }
 
 function placePieces(){
   boardEl.querySelectorAll('.stPieces').forEach(el=> el.innerHTML='');
   if(!state) return;
-
-  state.seats.forEach((info, seat)=>{
+  state.seats.forEach((info,seat)=>{
     if(!info || !info.occupied) return;
-    const key = stationKeyFor(info.routeKey, info.pos);
-    const slot = boardEl.querySelector('.stPieces[data-key="'+key+'"]');
+    const key=stationKeyFor(info.routeKey, info.pos);
+    const slot=boardEl.querySelector('.stPieces[data-key="'+key+'"]');
     if(!slot) return;
-
-    const train = document.createElement('div');
-    train.className = 'train p' + seat;
-    const band = document.createElement('div'); band.className='band';
-    const label= document.createElement('div'); label.className='label';
-    label.textContent = info.name;
-    const wl = document.createElement('div'); wl.className='wheel l';
-    const wr = document.createElement('div'); wr.className='wheel r';
-    train.appendChild(band); train.appendChild(label);
-    train.appendChild(wl); train.appendChild(wr);
+    const train=document.createElement('div'); train.className='train p'+seat;
+    const band=document.createElement('div'); band.className='band';
+    const label=document.createElement('div'); label.className='label'; label.textContent=info.name;
+    const wl=document.createElement('div'); wl.className='wheel l';
+    const wr=document.createElement('div'); wr.className='wheel r';
+    train.appendChild(band); train.appendChild(label); train.appendChild(wl); train.appendChild(wr);
     slot.appendChild(train);
   });
 }
 
-/* ======================================================================
- *  中央追従（手番プレイヤーのコマを画面中央へ）
- * ==================================================================== */
+/* ---- 中央追従 ------------------------------------------------------ */
 function centerOnCurrent(){
-  if(!state || !state.started || state.currentTurn < 0) return;
-  const info = state.seats[state.currentTurn];
+  if(!state || !state.started || state.currentTurn<0) return;
+  const info=state.seats[state.currentTurn];
   if(!info || !info.occupied) return;
-  const key = stationKeyFor(info.routeKey, info.pos);
-  const st  = layout && layout.byKey[key];
+  const st=layout && layout.byKey[stationKeyFor(info.routeKey, info.pos)];
   if(!st) return;
-  const targetX = st.x - scrollEl.clientWidth  / 2;
-  const targetY = st.y - scrollEl.clientHeight / 2;
-  scrollEl.scrollTo({ left:targetX, top:targetY, behavior:'smooth' });
+  scrollEl.scrollTo({ left:st.x-scrollEl.clientWidth/2,
+                      top:st.y-scrollEl.clientHeight/2, behavior:'smooth' });
 }
 
-/* ======================================================================
- *  ルーレット（描画・回転）
- * ==================================================================== */
-const ctx = wheel.getContext('2d');
-const WHEEL_N = 6;
-const WHEEL_COLORS = ['#ef5350','#42a5f5','#66bb6a','#ffa726','#ab47bc','#26c6da'];
-let wheelAngle = 0;
-let spinning = false;
+/* ---- ルーレット ---------------------------------------------------- */
+const ctx=wheel.getContext('2d');
+const WHEEL_N=6;
+const WHEEL_COLORS=['#ef5350','#42a5f5','#66bb6a','#ffa726','#ab47bc','#26c6da'];
+let wheelAngle=0, spinning=false;
 
-function resizeWheel(){
-  const d = Math.round(window.innerHeight * 0.5); // 直径=縦の50%
-  wheel.width = d; wheel.height = d;
-  drawWheel();
-}
+function resizeWheel(){ const d=Math.round(window.innerHeight*0.5);
+  wheel.width=d; wheel.height=d; drawWheel(); }
 function drawWheel(){
-  const d = wheel.width, r = d/2, cx=r, cy=r;
+  const d=wheel.width, r=d/2, cx=r, cy=r;
   ctx.clearRect(0,0,d,d);
-  const seg = (Math.PI*2)/WHEEL_N;
+  const seg=(Math.PI*2)/WHEEL_N;
   for(let i=0;i<WHEEL_N;i++){
-    const a0 = wheelAngle + i*seg;
-    const a1 = a0 + seg;
-    ctx.beginPath();
-    ctx.moveTo(cx,cy);
-    ctx.arc(cx,cy,r-4,a0,a1);
-    ctx.closePath();
-    ctx.fillStyle = WHEEL_COLORS[i];
-    ctx.fill();
+    const a0=wheelAngle+i*seg, a1=a0+seg;
+    ctx.beginPath(); ctx.moveTo(cx,cy); ctx.arc(cx,cy,r-4,a0,a1); ctx.closePath();
+    ctx.fillStyle=WHEEL_COLORS[i]; ctx.fill();
     ctx.strokeStyle='#fff'; ctx.lineWidth=2; ctx.stroke();
-    ctx.save();
-    ctx.translate(cx,cy);
-    ctx.rotate(a0 + seg/2);
+    ctx.save(); ctx.translate(cx,cy); ctx.rotate(a0+seg/2);
     ctx.fillStyle='#fff'; ctx.font='bold '+Math.round(r*0.28)+'px sans-serif';
     ctx.textAlign='center'; ctx.textBaseline='middle';
-    ctx.fillText(String(i+1), r*0.62, 0);
-    ctx.restore();
+    ctx.fillText(String(i+1), r*0.62, 0); ctx.restore();
   }
   ctx.beginPath(); ctx.arc(cx,cy,r*0.12,0,Math.PI*2);
-  ctx.fillStyle='#fff'; ctx.fill();
-  ctx.strokeStyle='#999'; ctx.lineWidth=2; ctx.stroke();
+  ctx.fillStyle='#fff'; ctx.fill(); ctx.strokeStyle='#999'; ctx.lineWidth=2; ctx.stroke();
 }
 function spinTo(value, cb){
-  if(spinning) return;
-  spinning = true;
-  startRollLoop();                 // 回転中は roll.mp3 を連続再生
-
-  const seg = (Math.PI*2)/WHEEL_N;
-  const idx = value - 1;
-  const targetCenter = -Math.PI/2;
-  const baseTarget = targetCenter - (idx*seg + seg/2);
-  const turns = 5 + Math.floor(Math.random()*2);
-  const finalAngle = baseTarget - turns*Math.PI*2;
-
-  const startAngle = wheelAngle;
-  const delta = finalAngle - startAngle;
-  const dur = 2600;
-  const t0 = performance.now();
-
+  if(spinning) return; spinning=true; startRollLoop();
+  const seg=(Math.PI*2)/WHEEL_N, idx=value-1;
+  const baseTarget=(-Math.PI/2)-(idx*seg+seg/2);
+  const turns=5+Math.floor(Math.random()*2);
+  const finalAngle=baseTarget-turns*Math.PI*2;
+  const startAngle=wheelAngle, delta=finalAngle-startAngle, dur=2600, t0=performance.now();
   function frame(now){
-    const t = Math.min(1, (now - t0)/dur);
-    const ease = 1 - Math.pow(1-t, 3); // ease-out cubic（減速）
-    wheelAngle = startAngle + delta*ease;
-    drawWheel();
-    if(t < 1){
-      requestAnimationFrame(frame);
-    }else{
-      spinning = false;
-      stopRollLoop();              // 停止で音も止める
-      if(cb) cb();
-    }
+    const t=Math.min(1,(now-t0)/dur);
+    const ease=1-Math.pow(1-t,3);
+    wheelAngle=startAngle+delta*ease; drawWheel();
+    if(t<1){ requestAnimationFrame(frame); }
+    else{ spinning=false; stopRollLoop(); if(cb) cb(); }
   }
   requestAnimationFrame(frame);
 }
-
-// 自分のクリックでルーレットを回す（自分の手番のときだけ）
 wheel.addEventListener('click', ()=>{
   if(!state || !state.started) return;
-  if(state.currentTurn !== mySeat) return;
+  if(state.currentTurn!==mySeat) return;
   if(spinning) return;
-  const value = 1 + Math.floor(Math.random()*6);
-  spinTo(value, ()=>{
-    socket.emit('roll', { value });
-  });
+  const value=1+Math.floor(Math.random()*6);
+  spinTo(value, ()=> socket.emit('roll', { value }));
 });
+socket.on('cpuRoll', ({ seat, value })=>{ if(spinning) return; spinTo(value, ()=>{}); });
 
-// CPU のルーレット演出（全端末で見えるように）
-socket.on('cpuRoll', ({ seat, value })=>{
-  if(spinning) return;
-  spinTo(value, ()=>{ /* 結果反映は server の state で来る */ });
-});
-
-/* ======================================================================
- *  操作ボタン
- * ==================================================================== */
+/* ---- 操作ボタン ---------------------------------------------------- */
 btnStart.addEventListener('click', ()=>{
   if(state && state.started) return;
-  btnStart.disabled = true;        // 押下後すぐグレーアウト
+  btnStart.disabled=true;
   socket.emit('start');
 });
-btnReset.addEventListener('click', ()=>{
-  socket.emit('reset');
-});
+btnReset.addEventListener('click', ()=> socket.emit('reset'));
 
-/* ======================================================================
- *  Socket 受信
- * ==================================================================== */
+/* ---- Socket 受信 --------------------------------------------------- */
 socket.on('state', (st)=>{
-  state = st;
-
-  // joinSeat 成功で自席を確定
+  state=st;
   if(pendingJoin){
-    const seat = pendingJoin.seat;
-    const info = st.seats[seat];
-    if(info && info.occupied && info.name === pendingJoin.name
-       && info.routeKey === pendingJoin.routeKey){
-      mySeat = seat; myConfirmed = true;
+    const seat=pendingJoin.seat, info=st.seats[seat];
+    if(info && info.occupied && info.name===pendingJoin.name && info.routeKey===pendingJoin.routeKey){
+      mySeat=seat; myConfirmed=true;
     }
-    pendingJoin = null;
+    pendingJoin=null;
   }
-
-  // 自席が空席に戻った（サーバー側でリセット/切断）場合
-  if(mySeat >= 0){
-    const mine = state.seats[mySeat];
-    if(!mine || !mine.occupied){ mySeat = -1; myConfirmed = false; }
-  }
-
+  if(mySeat>=0){ const mine=state.seats[mySeat]; if(!mine || !mine.occupied){ mySeat=-1; myConfirmed=false; } }
   if(!layout && state.routes) buildLayout(state.routes);
-
   renderSeats();
   renderBoard();
-
-  if(state.started && state.currentTurn >= 0){
-    centerOnCurrent();
-  }
+  if(state.started && state.currentTurn>=0) centerOnCurrent();
 });
 
-// 効果音イベント（全端末同期 or 自分宛）
 socket.on('event', (ev)=>{
   switch(ev.type){
     case 'start':    play(sndStart); break;
-    case 'reset':    stopAll(); play(sndReset); break;  // 鳴っている音を止めて reset
+    case 'reset':    stopAll(); play(sndReset); break;
     case 'move':     play(sndTrain); break;
     case 'rank':     play(sndRank); break;
     case 'goal':     play(sndGoal); break;
-    case 'gameover': play(sndGameover); break;           // goal と同時に届く
-    case 'your_turn':play(sndYourTurn); break;           // サーバーが自分にだけ送る
+    case 'gameover': play(sndGameover); break;
+    case 'your_turn':play(sndYourTurn); break;
   }
 });
 
-/* ======================================================================
- *  初期化
- * ==================================================================== */
-window.addEventListener('resize', ()=>{ resizeWheel(); });
-
+/* ---- 初期化 -------------------------------------------------------- */
+window.addEventListener('resize', ()=> resizeWheel());
 buildSeats();
 resizeWheel();
-
-console.log('[sugoroku] client.js v3.9 ready  (2026-06-21 11:00 JST)');
+console.log('[sugoroku] client.js v4.0 ready  (2026-06-21 11:13 JST)');
 
 })();

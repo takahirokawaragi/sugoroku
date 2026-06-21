@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <!-- =======================================================================
      オンライン鉄道すごろく  index.html
-     Version: v3.9
-     Date   : 2026-06-21（日）11:00 JST
-     - 駅位置表示/最終順位表示を撤去
-     - タイトル「オンライン鉄道すごろく　5人用」を角丸背景バナー化
-     - ルーレット下に案内文「ルーレットをクリックして回そう！」
-     - 席UI=七並べ式(joinSeat方式)。確定前は全ボタン グレー。
-     - ゲーム開始ボタンは押下後グレーアウト。
-     ※ server.js v3.9 / client.js v3.9 とセット
+     Version: v4.0
+     Date   : 2026-06-21（日）11:13 JST
+     【重要修正 v4.0】
+       - script を /sugoroku/client.js → client.js に変更（404解消）
+       - socket は既定名前空間で接続（io()）
+       - favicon 404 を抑止する空アイコン指定を追加
+       - タイトルの虹グラデが効かない環境向けフォールバックを追加
+     ※ server.js v4.0 / client.js v4.0 とセット
      ======================================================================= -->
 <html lang="ja">
 
@@ -16,6 +16,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>オンライン鉄道すごろく　5人用</title>
+  <!-- favicon 404 抑止（中身は空の data URI） -->
+  <link rel="icon" href="data:,">
   <style>
     :root {
       --p1: #e53935;
@@ -24,9 +26,7 @@
       --p4: #fb8c00;
       --p5: #8e24aa;
       --sign-frame: #1a7fc4;
-      /* 看板の青枠 */
       --sign-band: #8cc63f;
-      /* 看板の緑バンド */
       --gray: #bdbdbd;
     }
 
@@ -66,15 +66,22 @@
       font-family: "Hiragino Kaku Gothic StdN", "ヒラギノ角ゴ StdN W9",
         "Hiragino Sans", "Yu Gothic", sans-serif;
       font-weight: 900;
-      background: linear-gradient(90deg,
-          #ff4d4d 0%, #ff9e2c 18%, #ffe14d 36%, #4dd964 54%,
-          #2ec5ff 72%, #b06bff 88%, #ff5fd1 100%);
-      -webkit-background-clip: text;
-      background-clip: text;
-      -webkit-text-fill-color: transparent;
-      color: transparent;
+      /* フォールバック：クリップ非対応環境では下の color/stroke で読める */
+      color: #ff7a00;
       -webkit-text-stroke: 0.9px #0d2c40;
       text-shadow: 0 2px 0 rgba(255, 255, 255, .45), 0 4px 8px rgba(0, 0, 0, .25);
+    }
+
+    /* クリップ対応環境のみ虹グラデを適用 */
+    @supports ((-webkit-background-clip:text) or (background-clip:text)) {
+      #titleBanner h1 {
+        background: linear-gradient(90deg,
+            #ff4d4d 0%, #ff9e2c 18%, #ffe14d 36%, #4dd964 54%,
+            #2ec5ff 72%, #b06bff 88%, #ff5fd1 100%);
+        -webkit-background-clip: text;
+        background-clip: text;
+        -webkit-text-fill-color: transparent;
+      }
     }
 
     /* ---- 左固定パネル（席・操作） --------------------------------------- */
@@ -126,7 +133,6 @@
       font-weight: 900;
       font-size: 14px;
       background: var(--gray);
-      /* 既定はグレー */
       transition: background .15s;
     }
 
@@ -181,7 +187,6 @@
       color: #fff;
       cursor: pointer;
       background: var(--gray);
-      /* 確定前はグレー */
     }
 
     .routeBtn.iwamizawa.on {
@@ -295,7 +300,6 @@
       position: relative;
     }
 
-    /* 大きさは client.js が設定 */
     #board svg.routeLayer {
       position: absolute;
       left: 0;
@@ -303,7 +307,7 @@
       pointer-events: none;
     }
 
-    /* ---- 駅看板（.stSign 系：現物仕様を維持） --------------------------- */
+    /* ---- 駅看板 --------------------------------------------------------- */
     .station {
       position: absolute;
       transform: translate(-50%, -50%);
@@ -377,7 +381,6 @@
       white-space: nowrap;
     }
 
-    /* マスの下に並ぶコマ置き場 */
     .stPieces {
       display: flex;
       flex-wrap: wrap;
@@ -387,7 +390,7 @@
       min-height: 14px;
     }
 
-    /* ---- 721系コマ（.train 系：現物仕様を維持） ------------------------ */
+    /* ---- 721系コマ ----------------------------------------------------- */
     .train {
       position: relative;
       width: 54px;
@@ -466,22 +469,18 @@
 
 <body>
 
-  <!-- タイトル -->
   <div id="titleBanner">
     <h1>オンライン鉄道すごろく　5人用</h1>
   </div>
 
-  <!-- 左：席＆操作 -->
   <div id="fixedPanel">
-    <div id="seats"><!-- client.js が5席を生成 --></div>
+    <div id="seats"></div>
     <div id="controls">
       <button id="btnStart">ゲーム開始</button>
       <button id="btnReset">リセット</button>
     </div>
-    <!-- ↓ ここより下の「駅位置一覧／順位表示」は撤去済み(v3.9) -->
   </div>
 
-  <!-- 右上：ルーレット -->
   <div id="rouletteWrap">
     <div id="wheelStage">
       <div id="pointer"></div>
@@ -490,13 +489,13 @@
     <div id="rouletteHint">ルーレットをクリックして回そう！</div>
   </div>
 
-  <!-- 盤面 -->
   <div id="boardScroll">
     <div id="board"></div>
   </div>
 
+  <!-- socket.io はルート直下から読む（既定名前空間） -->
   <script src="/socket.io/socket.io.js"></script>
-  <script src="/sugoroku/client.js?v=3.9"></script>
+  <script src="client.js?v=4.0"></script>
 </body>
 
 </html>
