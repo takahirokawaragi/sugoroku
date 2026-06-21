@@ -1,14 +1,13 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v4.1
-     日付: 2026-06-21（日）18:59 JST
-     土台: 現物 v3.8 index.html
-     v4.1での変更点（見た目のみ・他は v3.8 現物のまま）:
-       - <title>とタイトル文字を「オンライン鉄道すごろく　5人用」に変更。
-       - .titleBanner に背景色・角丸・枠・余白・影を追加（角丸長方形で囲う）。
-       - ルーレット下に案内文「ルーレットをクリックして回そう！」(#rouletteHint)を追加。
-       - 上記以外（看板.stSign系・721系コマ.train系・盤面・席UI）は v3.8 現物のまま。
-     ※ server.js v3.8 / client.js v3.8 とセットで使用（PC前提）
+     バージョン: v4.2
+     日付: 2026-06-21（日）21:56 JST
+     土台: v4.1 index.html
+     v4.2での変更点:
+       - ルーレット下の案内文(#rouletteHint)を、タイトルバナーと同じ
+         枠線デザイン（2px枠・角丸16px・影）に変更。
+       - 他（看板/コマ/盤面/席UI/タイトル）は v4.1 のまま。
+     ※ server.js v3.8 / client.js v4.2 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -49,7 +48,7 @@
       cursor: default;
     }
 
-    /* ===== 上中央 タイトルバナー（v4.1: 角丸背景を追加）===== */
+    /* ===== 上中央 タイトルバナー（角丸背景）===== */
     .titleBanner {
       position: fixed;
       top: 8px;
@@ -91,7 +90,7 @@
       user-select: none;
     }
 
-    /* ===== 左メニュー（元すごろく式A案・フロート固定）===== */
+    /* ===== 左メニュー ===== */
     .fixedPanel {
       position: fixed;
       top: 70px;
@@ -195,7 +194,6 @@
       opacity: .55;
     }
 
-    /* 追分ボタン横の着順表示（七並べと同色） */
     .seatRank {
       flex: 0 0 auto;
       font-size: 13px;
@@ -244,7 +242,7 @@
       margin-top: 4px;
     }
 
-    /* ===== ルーレット（右上・単体フロート固定）===== */
+    /* ===== ルーレット（右上）===== */
     #rouletteWrap {
       position: fixed;
       top: 70px;
@@ -271,16 +269,18 @@
       transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
     }
 
-    /* v4.1: ルーレット下の案内文 */
+    /* v4.2: ルーレット下の案内文をタイトルと同じ枠線デザインに */
     #rouletteHint {
-      margin: 10px auto 0;
+      margin: 12px auto 0;
       text-align: center;
       font-size: 15px;
       font-weight: bold;
       color: #1b3a5b;
-      background: rgba(255, 255, 255, 0.9);
-      border-radius: 10px;
-      padding: 6px 10px;
+      background: rgba(255, 255, 255, 0.92);
+      border: 2px solid #c9d6e4;
+      border-radius: 16px;
+      padding: 8px 16px;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, .15);
     }
 
     /* ===== 盤面 ===== */

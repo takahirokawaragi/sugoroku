@@ -1,21 +1,22 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v4.1
-   日付: 2026-06-21（日）19:08 JST
-   土台: 現物 v3.8 client.js
-   v4.1での変更点（現物v3.8をベースに必要箇所のみ）:
-     1) 栗山の分裂を修正：分岐index0(栗山)を岩見沢/追分で共有し1枚だけ描画。
-     2) 栗山→栗丘(岩見沢index1)を上へ、栗山→由仁(追分index1)を右下へ離す。
-     3) 音をファイル名どおりに差し替え：
-        train.mp3(コマ移動) / your_turn.wav(自分の番) /
-        start.wav(開始) / reset.wav(リセット) /
-        rank.mp3(1〜4位ゴール) / goal.mp3 + gameover.wav(最後のゴール) /
-        roll.mp3(ルーレット回転)。
-     4) プレイヤーの駅一覧表示(#players)を非表示（中身を出さない）。
-     5) 最後の順位表示(#result)を非表示（showResultを無効化）。
-     6) ゲーム開始ボタンは押下で即グレーアウト。
+   バージョン: v4.2
+   日付: 2026-06-21（日）22:20 JST
+   土台: v4.1 client.js（=現物 v3.8 ベース）
+   v4.2での変更点:
+     1) 手番枠・「あなたの番」音・順位表示を、moves再生(アニメ)が
+        すべて終わってから反映するよう統一（サーバーが先に手番を進める
+        ため起きていた「枠ずれ・番の音抜け・順位前後」を解消）。
+     2) ゲーム開始ボタンは押下で即グレーアウトし、その後 state が
+        来ても戻さない（iStartedPressed フラグで保持）。
+     3) 開始音(start.wav)→あなたの番(your_turn.wav)の順で鳴らす
+        （start直後はyour_turnを1.4秒抑制）。
+     4) コース決定(confirmSeat)で button.mp3 を鳴らす。
+     5) ルーレット音(roll.mp3)の途切れを軽減（多重Audioプール方式）。
+     6) v4.1の機能（栗山1枚化・栗丘/由仁の距離拡大・移動音train・
+        駅一覧/順位表示の撤去・goal+gameover/rank出し分け）は維持。
      ※ 看板/コマ/ルーレット描画・座標骨格・席UIは現物のまま。
-     ※ server.js v3.8 / index.html v4.1 とセットで使用。
+     ※ server.js v3.8 / index.html v4.2 とセット。
    ========================================================= */
 
 const socket = io();
@@ -44,6 +45,10 @@ let latestState = null;
 let canRoll = false;
 
 let draftNames = ["", "", "", "", ""];
+
+// v4.2: 開始ボタン保持／番の音抑制
+let iStartedPressed = false;
+let suppressYourTurnUntil = 0;
 
 const boardEl = document.getElementById("board");
 const boardScrollEl = document.querySelector(".boardScroll");
@@ -74,10 +79,10 @@ const RAW_COMMON = (function () {
   return arr;
 })();
 
-// v4.1: 栗山(index0)は共有。栗丘(index1)を上へ離す（y をさらに -180 拡大）
+// v4.1/v4.2: 栗山(index0)は共有。栗丘(index1)を上へ離す
 const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（共有起点）
-  { x: SHI_X + 1850, y: SHI_Y - 610 },  // 1 栗丘（v4.1: 上へ離す）
+  { x: SHI_X + 1850, y: SHI_Y - 610 },  // 1 栗丘（上へ離す）
   { x: SHI_X + 1850, y: SHI_Y - 790 },  // 2 栗沢
   { x: SHI_X + 1850, y: SHI_Y - 970 },  // 3 志文
   { x: SHI_X + 1850, y: SHI_Y - 1150 }, // 4 岩見沢
@@ -92,10 +97,10 @@ const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 180,  y: SHI_Y - 440 },  // 13 厚別
 ];
 
-// v4.1: 栗山(index0)は共有。由仁(index1)を右下へ離す
+// v4.1/v4.2: 栗山(index0)は共有。由仁(index1)を右下へ離す
 const RAW_OIWAKE_BRANCH = [
   { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（共有起点・岩見沢index0と同一）
-  { x: SHI_X + 2130, y: SHI_Y + 40 },   // 1 由仁（v4.1: 右下へ離す）
+  { x: SHI_X + 2130, y: SHI_Y + 40 },   // 1 由仁（右下へ離す）
   { x: SHI_X + 2210, y: SHI_Y + 250 },  // 2 古山
   { x: SHI_X + 2240, y: SHI_Y + 480 },  // 3 三川
   { x: SHI_X + 2240, y: SHI_Y + 720 },  // 4 追分
@@ -169,7 +174,7 @@ function applyWheelSize() {
 window.addEventListener("resize", applyWheelSize);
 
 // =========================================================
-//  音（mp3/wav 再生・public/sounds/）  ※ v4.1: ファイル名を要望どおりに
+//  音（mp3/wav 再生・public/sounds/）
 // =========================================================
 const SOUND_FILES = {
   train: "/sounds/train.mp3",       // コマ移動
@@ -179,7 +184,7 @@ const SOUND_FILES = {
   rank: "/sounds/rank.mp3",         // 1〜4位ゴール
   goal: "/sounds/goal.mp3",         // 最後のゴール
   gameover: "/sounds/gameover.wav", // 最後のゴール（同時）
-  roll: "/sounds/roll.mp3",         // ルーレット回転
+  button: "/sounds/button.mp3",     // コース決定・各ボタン
 };
 const audioCache = {};
 let audioUnlocked = false;
@@ -195,11 +200,28 @@ function preloadSounds() {
 }
 preloadSounds();
 
+// v4.2: roll.mp3 はプール化して途切れを軽減
+const ROLL_POOL_SIZE = 6;
+const rollPool = [];
+let rollPoolIdx = 0;
+(function buildRollPool() {
+  for (let i = 0; i < ROLL_POOL_SIZE; i++) {
+    try {
+      const a = new Audio(SOUND_FILES.roll || "/sounds/roll.mp3");
+      a.preload = "auto";
+      a.volume = 0.9;
+      rollPool.push(a);
+    } catch (e) { /* ignore */ }
+  }
+})();
+// SOUND_FILES に roll を持たせておく（上の参照用）
+SOUND_FILES.roll = "/sounds/roll.mp3";
+
 function unlockAudio() {
   if (audioUnlocked) return;
   audioUnlocked = true;
-  Object.keys(audioCache).forEach((key) => {
-    const a = audioCache[key];
+  const all = Object.keys(audioCache).map((k) => audioCache[k]).concat(rollPool);
+  all.forEach((a) => {
     if (!a) return;
     try {
       a.muted = true;
@@ -225,20 +247,23 @@ function playSound(key) {
   } catch (e) { /* ignore */ }
 }
 
-// ===== roll.mp3 をルーレット回転速度に合わせ連続再生 =====
+function playRollOnce() {
+  const a = rollPool[rollPoolIdx % rollPool.length];
+  rollPoolIdx++;
+  if (!a) return;
+  try {
+    a.currentTime = 0;
+    const p = a.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) { /* ignore */ }
+}
+
+// ===== roll.mp3 をルーレット回転速度に合わせ連続再生（プール使用）=====
 let rollTickTimer = null;
 function startRollTicking() {
   let interval = 60;
   const tick = () => {
-    try {
-      const src = audioCache.roll;
-      if (src && src.src) {
-        const a = new Audio(src.src);
-        a.volume = 0.9;
-        const p = a.play();
-        if (p && p.catch) p.catch(() => {});
-      }
-    } catch (e) { /* ignore */ }
+    playRollOnce();
     interval += 12;
     if (interval < 280) rollTickTimer = setTimeout(tick, interval);
   };
@@ -505,7 +530,6 @@ function renderBoard(positions, override) {
     const arr = routes[rk] || [];
     const cs = commonStart[rk];
     for (let pos = 0; pos < arr.length; pos++) {
-      // v4.1: 共通区間は共有
       if (typeof cs === "number" && pos >= cs) {
         const ckey = "C:" + (pos - cs);
         if (coordCellDrawn[ckey]) {
@@ -517,7 +541,6 @@ function renderBoard(positions, override) {
         coordCellDrawn[ckey] = cell;
         cellMap[rk + ":" + pos] = cell;
       } else if (pos === 0) {
-        // v4.1: 栗山(分岐index0)は両ルート共有で1枚だけ描画
         const ckey = "KURIYAMA";
         if (coordCellDrawn[ckey]) {
           cellMap[rk + ":" + pos] = coordCellDrawn[ckey];
@@ -582,7 +605,7 @@ function animateSteps(playerIndex, from, to, onDone) {
   const stepOnce = () => {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
-    playSound("train"); // v4.1: コマ移動音=train.mp3
+    playSound("train"); // コマ移動音=train.mp3
     renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
     centerOnCell(current, rk, true);
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
@@ -590,6 +613,13 @@ function animateSteps(playerIndex, from, to, onDone) {
   };
   if (from === to) { if (onDone) onDone(); return; }
   stepOnce();
+}
+
+// v4.2: moves をすべて再生し終えたか
+function allMovesShownNow() {
+  const mv = (latestState && latestState.moves) || [];
+  if (mv.length === 0) return true;
+  return mv[mv.length - 1].seq === lastShownSeq;
 }
 
 function processNextMove() {
@@ -610,17 +640,14 @@ function processNextMove() {
       lastShownSeq = next.seq;
       if (next.to >= goals[rk] && !fanfaredIndexes[next.index]) {
         fanfaredIndexes[next.index] = true;
-        // v4.1: ゴール音を順位で出し分け
         const finishedCount = latestState.players.filter(
           (pp) => pp && pp.rank && pp.rank > 0
         ).length;
         const activeCount = latestState.players.filter((pp) => !!pp).length;
         if (finishedCount >= activeCount) {
-          // 最後のプレイヤー：goal.mp3 + gameover.wav 同時
           playSound("goal");
           playSound("gameover");
         } else {
-          // 1〜4位：rank.mp3
           playSound("rank");
         }
       }
@@ -640,17 +667,20 @@ function tryRoll() {
 wheel.addEventListener("click", tryRoll);
 
 // =========================================================
-//  5席メニュー（七並べと同一の挙動・現物のまま）
+//  5席メニュー
 // =========================================================
 function renderSeats(state) {
   if (!seatsEl) return;
   seatsEl.innerHTML = "";
 
+  // v4.2: アニメ再生が終わるまでは「見せている手番」を使う
+  const shownTurn = displayedCurrentTurn(state);
+
   for (let i = 0; i < MAX_SEATS; i++) {
     const p = state.players[i];
     const occupied = !!p;
     const isMine = occupied && p.id === myId;
-    const isCurrent = state.started && !state.finished && state.currentTurn === i && occupied;
+    const isCurrent = state.started && !state.finished && shownTurn === i && occupied;
 
     const row = document.createElement("div");
     row.className = "seat";
@@ -718,14 +748,27 @@ function renderSeats(state) {
     row.appendChild(iwaBtn);
     row.appendChild(oiwBtn);
 
+    // v4.2: 順位はアニメ再生が全部終わってから表示
     const rank = document.createElement("span");
     rank.className = "seatRank";
     rank.dataset.seat = String(i);
-    rank.textContent = (occupied && p.rank && p.rank > 0) ? (p.rank + "位") : "";
+    const showRank = allMovesShownNow() && occupied && p.rank && p.rank > 0;
+    rank.textContent = showRank ? (p.rank + "位") : "";
     row.appendChild(rank);
 
     seatsEl.appendChild(row);
   }
+}
+
+// v4.2: 見せている手番（アニメ中はその move の人、終わっていれば本物のcurrentTurn）
+function displayedCurrentTurn(state) {
+  if (!state.started) return state.currentTurn;
+  if (allMovesShownNow()) return state.currentTurn;
+  // 未再生の次の move の人を「今の手番」として見せる
+  const mv = state.moves || [];
+  const next = mv.find((m) => m.seq === lastShownSeq + 1);
+  if (next) return next.index;
+  return state.currentTurn;
 }
 
 function grayOut(btn) {
@@ -739,6 +782,7 @@ function ungray(btn) {
 
 function confirmSeat(seatIndex, routeKey, input) {
   unlockAudio();
+  playSound("button"); // v4.2: コース決定音=button.mp3
   const name = (input.value || "").trim() || ("P" + (seatIndex + 1));
   draftNames[seatIndex] = name;
   socket.emit("joinSeat", { seat: seatIndex, name, routeKey });
@@ -747,13 +791,15 @@ function confirmSeat(seatIndex, routeKey, input) {
 // ===== ボタン =====
 startBtn.addEventListener("click", () => {
   unlockAudio();
-  playSound("start");          // v4.1: 開始音=start.wav
-  startBtn.disabled = true;    // v4.1: 押下で即グレーアウト
+  iStartedPressed = true;        // v4.2: 押した記録
+  startBtn.disabled = true;      // v4.2: 即グレーアウト
+  playSound("start");            // 開始音=start.wav
+  suppressYourTurnUntil = Date.now() + 1400; // v4.2: 開始→番の順にする
   socket.emit("start");
 });
 resetBtn.addEventListener("click", () => {
   unlockAudio();
-  playSound("reset");          // v4.1: リセット音=reset.wav
+  playSound("reset");            // リセット音=reset.wav
   if (confirm("ゲームをリセットして最初に戻しますか？")) socket.emit("reset");
 });
 
@@ -766,6 +812,8 @@ socket.on("resetReady", () => {
   mySeat = -1;
   lastShownSeq = 0; animating = false; fanfaredIndexes = {}; currentRotation = 0;
   canRoll = false;
+  iStartedPressed = false;       // v4.2: 開始フラグ解除
+  suppressYourTurnUntil = 0;
   wheel.style.transition = "none"; wheel.style.transform = "rotate(0deg)";
   setTimeout(() => { wheel.style.transition = ""; }, 50);
   resultEl.classList.remove("show");
@@ -794,46 +842,60 @@ function finalizeState(state) {
   renderSeats(state);
   renderBoard(positionsUpToShown());
 
-  // v4.1: プレイヤーの駅一覧表示は出さない
+  // v4.2: 駅一覧は出さない
   if (playersEl) playersEl.innerHTML = "";
 
-  const allMovesShown = !state.moves || state.moves.length === 0 ||
-    state.moves[state.moves.length - 1].seq === lastShownSeq;
+  const movesDone = allMovesShownNow();
 
-  if (state.finished && allMovesShown && !animating) {
+  if (state.finished && movesDone && !animating) {
     if (statusEl) statusEl.textContent = "🏁 全員ゴール！ゲーム終了";
     startBtn.disabled = true; canRoll = false;
     lastMyTurn = false;
-    // v4.1: 最後の順位表示は出さない
-    resultEl.classList.remove("show");
+    resultEl.classList.remove("show"); // 順位表示は出さない
     centerOnActivePlayer(true);
     return;
   }
   if (!state.started) {
     if (statusEl) statusEl.textContent = "名前を入れてルートを選び「ゲーム開始」を押してください";
-    startBtn.disabled = false; canRoll = false;
+    // v4.2: 自分が開始を押していたら、未開始stateが来ても戻さない
+    startBtn.disabled = iStartedPressed ? true : false;
+    canRoll = false;
     lastMyTurn = false;
     resultEl.classList.remove("show");
     centerOnActivePlayer(false);
     return;
   }
   startBtn.disabled = true;
+
+  // v4.2: 手番の確定（音・canRoll）はアニメ再生が全部終わってから
+  if (!movesDone || animating) {
+    canRoll = false;
+    return;
+  }
+
   const current = state.players[state.currentTurn];
   const myTurn = current && current.id === myId;
   if (statusEl) statusEl.textContent = "";
-  canRoll = !!myTurn && !animating;
+  canRoll = !!myTurn;
 
-  if (myTurn && !lastMyTurn && !animating) {
-    playSound("yourTurn"); // v4.1: 自分の番=your_turn.wav
+  if (myTurn && !lastMyTurn) {
+    // v4.2: 開始直後は start.wav 優先、少し遅らせて鳴らす
+    const now = Date.now();
+    if (now < suppressYourTurnUntil) {
+      const wait = suppressYourTurnUntil - now;
+      setTimeout(() => { playSound("yourTurn"); }, wait);
+    } else {
+      playSound("yourTurn");
+    }
   }
   lastMyTurn = !!myTurn;
 
-  if (!animating) centerOnActivePlayer(true);
+  centerOnActivePlayer(true);
 }
 
-// v4.1: 最後の順位表示は無効化（要望により非表示）
+// v4.2: 順位表示は無効化（要望により非表示）
 function showResult() {
   if (resultEl) resultEl.classList.remove("show");
 }
 
-console.log("[sugoroku] client.js v4.1 ready (2026-06-21 19:08 JST)");
+console.log("[sugoroku] client.js v4.2 ready (2026-06-21 22:20 JST)");
