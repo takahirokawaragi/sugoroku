@@ -1,283 +1,322 @@
-/* =======================================================================
- * オンライン鉄道すごろく  server.js
- * Version: v4.0
- * Date   : 2026-06-21（日）11:13 JST
- * -----------------------------------------------------------------------
- * 【重要変更 v4.0】
- *   名前空間 '/sugoroku' を撤去し、ルート直下(io())で動作させる。
- *   → これまで index.html が /sugoroku/client.js を読みに行き 404 になって
- *     いた問題を根絶。client.js は public/ 直下、ソケットも既定名前空間。
- *   席管理は座席番号で着席・ロックする方式(joinSeat)。名前混入バグ無し。
- *   音声イベントは 'event' で全端末同時配信。
- *     start / reset / move / goal / gameover / rank / your_turn
- * ======================================================================= */
+/* =========================================================
+   すごろくゲーム  server.js
+   バージョン: v3.8
+   日付: 2026-06-21（日）10:12 JST
+   v3.8での変更点（席管理を七並べ方式へ全面刷新・3ファイル同時v3.8化）:
+     - 接続順 players → 「seat番号で着席する固定スロット方式」へ変更。
+       七並べ(server.js v1.8)の joinSeat 方式に合わせた。
+     - 新イベント joinSeat({ seat, name, routeKey }) を追加。
+       ・空席なら着席・ロック、使用中なら rejected。
+       ・名前＋ルートを1回で確定（七並べと同じ挙動）。
+     - 旧イベント setName / setRoute を廃止（混入バグの根本原因）。
+       → 「隣の席に名前が入る」「他人の欄に書ける」バグを根絶。
+     - currentTurn は seat 番号基準に統一。
+     - startGame の CPU 補充は空席(seat)を埋める方式に変更。
+     - state.players は5席ぶんの固定スロット配列（空席は null）で送る。
+     - 駅データ・ルート・ゴール・rollDice 等の進行ロジックは v3.5 と同一。
+     - client.js v3.8 / index.html v3.8 とセットで使用。
+   --- 過去履歴 ---
+   v3.5: 岩見沢ルート駅順修正（江別→高砂→野幌→大麻）
+   v3.1: 両ルート同時配信・各自ルート選択・白石で合流
+   ========================================================= */
 
-const express = require('express');
-const http    = require('http');
-const path    = require('path');
-const { Server } = require('socket.io');
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const path = require("path");
 
-const app    = express();
+const app = express();
 const server = http.createServer(app);
-const io     = new Server(server);
+const io = new Server(server);
 
-/* ---- 静的公開 ---------------------------------------------------------- */
-app.get('/health', (_req, res) => res.send('ok'));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, "public")));
+app.get("/health", (req, res) => res.send("ok"));
 
-/* ---- 路線データ ------------------------------------------------------- */
+// ===== 分岐部分の駅（栗山〜白石の手前まで）=====
 const BRANCH_IWAMIZAWA = [
-  { name:'栗丘',   kana:'くりおか',   roma:'Kurioka'   },
-  { name:'岩見沢', kana:'いわみざわ', roma:'Iwamizawa' },
-  { name:'峰延',   kana:'みねのぶ',   roma:'Minenobu'  },
-  { name:'光珠内', kana:'こうしゅない',roma:'Koshunai'  },
-  { name:'美唄',   kana:'びばい',     roma:'Bibai'     },
-  { name:'江別',   kana:'えべつ',     roma:'Ebetsu'    },
-  { name:'高砂',   kana:'たかさご',   roma:'Takasago'  },
-  { name:'野幌',   kana:'のっぽろ',   roma:'Nopporo'   },
-  { name:'大麻',   kana:'おおあさ',   roma:'Oasa'      },
+  { kanji: "栗山", kana: "くりやま", romaji: "Kuriyama" },
+  { kanji: "栗丘", kana: "くりおか", romaji: "Kurioka" },
+  { kanji: "栗沢", kana: "くりさわ", romaji: "Kurisawa" },
+  { kanji: "志文", kana: "しぶん", romaji: "Shibun" },
+  { kanji: "岩見沢", kana: "いわみざわ", romaji: "Iwamizawa" },
+  { kanji: "上幌向", kana: "かみほろむい", romaji: "Kami-Horomui" },
+  { kanji: "幌向", kana: "ほろむい", romaji: "Horomui" },
+  { kanji: "豊幌", kana: "とよほろ", romaji: "Toyohoro" },
+  { kanji: "江別", kana: "えべつ", romaji: "Ebetsu" },
+  { kanji: "高砂", kana: "たかさご", romaji: "Takasago" },
+  { kanji: "野幌", kana: "のっぽろ", romaji: "Nopporo" },
+  { kanji: "大麻", kana: "おおあさ", romaji: "Ōasa" },
+  { kanji: "森林公園", kana: "しんりんこうえん", romaji: "Shinrin-Kōen" },
+  { kanji: "厚別", kana: "あつべつ", romaji: "Atsubetsu" },
 ];
 
 const BRANCH_OIWAKE = [
-  { name:'由仁',   kana:'ゆに',       roma:'Yuni'      },
-  { name:'追分',   kana:'おいわけ',   roma:'Oiwake'    },
-  { name:'三川',   kana:'みかわ',     roma:'Mikawa'    },
-  { name:'古山',   kana:'ふるさん',   roma:'Furusan'   },
-  { name:'植苗',   kana:'うえなえ',   roma:'Uenae'     },
-  { name:'沼ノ端', kana:'ぬまのはた', roma:'Numanohata'},
-  { name:'苫小牧', kana:'とまこまい', roma:'Tomakomai' },
-  { name:'南千歳', kana:'みなみちとせ',roma:'Minamichitose'},
+  { kanji: "栗山", kana: "くりやま", romaji: "Kuriyama" },
+  { kanji: "由仁", kana: "ゆに", romaji: "Yuni" },
+  { kanji: "古山", kana: "ふるさん", romaji: "Furusan" },
+  { kanji: "三川", kana: "みかわ", romaji: "Mikawa" },
+  { kanji: "追分", kana: "おいわけ", romaji: "Oiwake" },
+  { kanji: "安平", kana: "あびら", romaji: "Abira" },
+  { kanji: "早来", kana: "はやきた", romaji: "Hayakita" },
+  { kanji: "遠浅", kana: "とあさ", romaji: "Toasa" },
+  { kanji: "沼ノ端", kana: "ぬまのはた", romaji: "Numanohata" },
+  { kanji: "植苗", kana: "うえなえ", romaji: "Uenae" },
+  { kanji: "南千歳", kana: "みなみちとせ", romaji: "Minami-Chitose" },
+  { kanji: "千歳", kana: "ちとせ", romaji: "Chitose" },
+  { kanji: "長都", kana: "おさつ", romaji: "Osatsu" },
+  { kanji: "サッポロビール庭園", kana: "さっぽろびーるていえん", romaji: "Sapporo Beer Teien" },
+  { kanji: "恵庭", kana: "えにわ", romaji: "Eniwa" },
+  { kanji: "恵み野", kana: "めぐみの", romaji: "Megumino" },
+  { kanji: "島松", kana: "しままつ", romaji: "Shimamatsu" },
+  { kanji: "北広島", kana: "きたひろしま", romaji: "Kita-Hiroshima" },
+  { kanji: "上野幌", kana: "かみのっぽろ", romaji: "Kami-Nopporo" },
+  { kanji: "新札幌", kana: "しんさっぽろ", romaji: "Shin-Sapporo" },
+  { kanji: "平和", kana: "へいわ", romaji: "Heiwa" },
 ];
 
 const COMMON = [
-  { name:'白石',   kana:'しろいし',   roma:'Shiroishi' },
-  { name:'平和',   kana:'へいわ',     roma:'Heiwa'     },
-  { name:'苗穂',   kana:'なえぼ',     roma:'Naebo'     },
-  { name:'札幌',   kana:'さっぽろ',   roma:'Sapporo'   },
+  { kanji: "白石", kana: "しろいし", romaji: "Shiroishi" },
+  { kanji: "苗穂", kana: "なえぼ", romaji: "Naebo" },
+  { kanji: "札幌", kana: "さっぽろ", romaji: "Sapporo" },
+  { kanji: "桑園", kana: "そうえん", romaji: "Sōen" },
+  { kanji: "琴似", kana: "ことに", romaji: "Kotoni" },
+  { kanji: "発寒中央", kana: "はっさむちゅうおう", romaji: "Hassamu-Chūō" },
+  { kanji: "発寒", kana: "はっさむ", romaji: "Hassamu" },
+  { kanji: "稲積公園", kana: "いなづみこうえん", romaji: "Inazumi-Kōen" },
+  { kanji: "手稲", kana: "ていね", romaji: "Teine" },
+  { kanji: "稲穂", kana: "いなほ", romaji: "Inaho" },
+  { kanji: "星置", kana: "ほしおき", romaji: "Hoshioki" },
+  { kanji: "ほしみ", kana: "ほしみ", romaji: "Hoshimi" },
+  { kanji: "銭函", kana: "ぜにばこ", romaji: "Zenibako" },
+  { kanji: "朝里", kana: "あさり", romaji: "Asari" },
+  { kanji: "小樽築港", kana: "おたるちっこう", romaji: "Otaru-Chikkō" },
+  { kanji: "南小樽", kana: "みなみおたる", romaji: "Minami-Otaru" },
+  { kanji: "小樽", kana: "おたる", romaji: "Otaru" },
 ];
 
-const COMMON_START = { name:'栗山', kana:'くりやま', roma:'Kuriyama' };
-
 const ROUTES = {
-  iwamizawa: [COMMON_START, ...BRANCH_IWAMIZAWA, ...COMMON],
-  oiwake   : [COMMON_START, ...BRANCH_OIWAKE,    ...COMMON],
+  iwamizawa: BRANCH_IWAMIZAWA.concat(COMMON),
+  oiwake: BRANCH_OIWAKE.concat(COMMON),
 };
-
 const GOALS = {
   iwamizawa: ROUTES.iwamizawa.length - 1,
-  oiwake   : ROUTES.oiwake.length - 1,
+  oiwake: ROUTES.oiwake.length - 1,
+};
+const COMMON_START = {
+  iwamizawa: BRANCH_IWAMIZAWA.length,
+  oiwake: BRANCH_OIWAKE.length,
 };
 
 const MAX_PLAYERS = 5;
-const CPU_WAIT    = 6500;
 
-/* ---- ゲーム状態 ------------------------------------------------------- */
-let players       = new Array(MAX_PLAYERS).fill(null);
-let currentTurn   = -1;
-let started       = false;
-let finished      = false;
+// ===== 席管理（七並べ方式：seat番号で固定スロット）=====
+let players = [];      // 着席している人だけ（各要素は seat を持つ）
+let currentTurn = 0;   // 現在手番の seat 番号
+let started = false;
+let finished = false;
 let finishedCount = 0;
-let seqCounter    = 0;
+let moves = [];
+let seqCounter = 0;
 
-function makePlayer(seat, name, routeKey, isCPU, socketId) {
-  return {
-    seat, name, routeKey,
-    isCPU: !!isCPU,
-    socketId: socketId || null,
-    pos: 0,
-    locked: true,
-    finishedFlag: false,
-    rank: 0,
-    seq: ++seqCounter,
-  };
+function seatTaken(seat) {
+  return players.some((p) => p.seat === seat);
+}
+function playerBySeat(seat) {
+  return players.find((p) => p.seat === seat);
+}
+function playerBySocket(id) {
+  return players.find((p) => p.socketId === id);
 }
 
-function seatedPlayers() { return players.filter(p => p !== null); }
-function seatOrder() {
-  const arr = [];
-  for (let i = 0; i < MAX_PLAYERS; i++) if (players[i]) arr.push(i);
-  return arr;
-}
-
-/* ---- 状態ブロードキャスト -------------------------------------------- */
 function broadcastState() {
-  const seats = players.map((p, seat) => {
-    if (!p) return { seat, occupied:false };
-    return {
-      seat, occupied:true,
-      name: p.name, routeKey: p.routeKey, isCPU: p.isCPU,
-      pos: p.pos, stationName: ROUTES[p.routeKey][p.pos].name,
-      finishedFlag: p.finishedFlag, rank: p.rank,
-    };
-  });
-  io.emit('state', {
-    seats, currentTurn, started, finished, finishedCount,
-    routes: { iwamizawa: ROUTES.iwamizawa, oiwake: ROUTES.oiwake,
-              goals: GOALS, commonStartIndex: 0 },
+  // client は players[i] を seat=i として扱う。空席は null。
+  const seatArr = [];
+  for (let s = 0; s < MAX_PLAYERS; s++) {
+    const p = playerBySeat(s);
+    seatArr.push(p ? {
+      id: p.socketId || ("cpu-" + s),
+      seat: s,
+      name: p.name,
+      pos: p.pos,
+      isCPU: p.isCPU,
+      rank: p.rank,
+      routeKey: p.routeKey,
+    } : null);
+  }
+  io.emit("state", {
+    players: seatArr,
+    currentTurn,
+    started, finished,
+    routes: ROUTES, goals: GOALS, commonStart: COMMON_START,
+    moves,
   });
 }
 
-/* ---- リセット --------------------------------------------------------- */
+function clearAll() {
+  players = [];
+  currentTurn = 0;
+  started = false;
+  finished = false;
+  finishedCount = 0;
+  moves = [];
+  seqCounter = 0;
+}
+
 function resetGame() {
-  for (const p of seatedPlayers()) { p.pos=0; p.finishedFlag=false; p.rank=0; }
-  currentTurn = -1; started = false; finished = false; finishedCount = 0;
-  broadcastState();
+  clearAll();
+  io.emit("resetReady");
 }
 
-/* ---- ゲーム開始 ------------------------------------------------------- */
+function humanCount() {
+  return players.filter((p) => !p.isCPU).length;
+}
+
 function startGame() {
-  if (started) return;
-  for (let seat = 0; seat < MAX_PLAYERS; seat++) {
-    if (!players[seat]) {
-      const routeKey = (seat % 2 === 0) ? 'iwamizawa' : 'oiwake';
-      players[seat] = makePlayer(seat, `CPU${seat + 1}`, routeKey, true, null);
+  if (humanCount() === 0) return;
+  // 空席を CPU で補充（seat 固定）
+  for (let s = 0; s < MAX_PLAYERS; s++) {
+    if (!seatTaken(s)) {
+      const rk = Math.random() < 0.5 ? "oiwake" : "iwamizawa";
+      players.push({
+        socketId: null, seat: s, name: "CPU" + (s + 1),
+        pos: 0, isCPU: true, rank: 0, routeKey: rk,
+      });
     }
   }
-  for (const p of seatedPlayers()) { p.pos=0; p.finishedFlag=false; p.rank=0; }
-  started = true; finished = false; finishedCount = 0;
-  const order = seatOrder();
-  currentTurn = order.length ? order[0] : -1;
+  players.sort((a, b) => a.seat - b.seat);
+
+  started = true;
+  finished = false;
+  finishedCount = 0;
+  moves = [];
+  seqCounter = 0;
+
+  currentTurn = players.length ? players[0].seat : 0;
   broadcastState();
-  notifyTurn();
   maybeRunCPU();
 }
 
-/* ---- 手番通知（自分の番の人にだけ your_turn） ----------------------- */
-function notifyTurn() {
-  if (currentTurn < 0) return;
-  const p = players[currentTurn];
-  if (!p) return;
-  if (!p.isCPU && p.socketId) io.to(p.socketId).emit('event', { type:'your_turn' });
-}
-
-/* ---- 手番送り --------------------------------------------------------- */
 function advanceTurn() {
-  const remain = seatOrder().filter(seat => !players[seat].finishedFlag);
-  if (remain.length === 0) { finished = true; currentTurn = -1; broadcastState(); return; }
-  let next = -1;
   for (let step = 1; step <= MAX_PLAYERS; step++) {
-    const cand = (currentTurn + step) % MAX_PLAYERS;
-    if (players[cand] && !players[cand].finishedFlag) { next = cand; break; }
+    const seat = (currentTurn + step) % MAX_PLAYERS;
+    const p = playerBySeat(seat);
+    if (p && p.rank === 0) { currentTurn = seat; return; }
   }
-  currentTurn = next;
+}
+
+function rollDice() {
+  if (!started || finished) return;
+  const player = playerBySeat(currentTurn);
+  if (!player) { advanceTurn(); maybeRunCPU(); return; }
+  if (player.rank !== 0) { advanceTurn(); maybeRunCPU(); return; }
+
+  const goal = GOALS[player.routeKey];
+  const dice = Math.floor(Math.random() * 10) + 1;
+  const from = player.pos;
+  player.pos += dice;
+  if (player.pos >= goal) {
+    player.pos = goal;
+    finishedCount += 1;
+    player.rank = finishedCount;
+  }
+  const to = player.pos;
+
+  seqCounter += 1;
+  moves.push({ seq: seqCounter, index: currentTurn, name: player.name, dice, from, to });
+  if (moves.length > 30) moves = moves.slice(-30);
+
+  if (players.every((p) => p.rank > 0)) {
+    finished = true;
+    broadcastState();
+    return;
+  }
+
+  advanceTurn();
   broadcastState();
-  notifyTurn();
   maybeRunCPU();
 }
 
-/* ---- ルーレット結果適用 ---------------------------------------------- */
-function applyRoll(seat, value) {
-  if (!started || finished) return;
-  if (seat !== currentTurn) return;
-  const p = players[seat];
-  if (!p || p.finishedFlag) return;
-
-  const goalIdx = GOALS[p.routeKey];
-  let np = p.pos + value;
-  if (np >= goalIdx) np = goalIdx;
-  p.pos = np;
-
-  io.emit('event', { type:'move' });
-
-  if (p.pos >= goalIdx) {
-    p.finishedFlag = true;
-    finishedCount += 1;
-    p.rank = finishedCount;
-    const totalSeated = seatedPlayers().length;
-    if (finishedCount >= totalSeated) {
-      io.emit('event', { type:'goal' });
-      io.emit('event', { type:'gameover' });
-      finished = true;
-    } else {
-      io.emit('event', { type:'rank', rank:p.rank });
-    }
-  }
-
-  broadcastState();
-  if (!finished) advanceTurn();
-  else { currentTurn = -1; broadcastState(); }
-}
-
-/* ---- CPU 自動進行 ----------------------------------------------------- */
 function maybeRunCPU() {
-  if (!started || finished || currentTurn < 0) return;
-  const p = players[currentTurn];
-  if (!p || !p.isCPU || p.finishedFlag) return;
-  setTimeout(() => {
-    if (!started || finished || currentTurn < 0) return;
-    const cur = players[currentTurn];
-    if (!cur || !cur.isCPU || cur.finishedFlag) return;
-    const value = 1 + Math.floor(Math.random() * 6);
-    io.emit('cpuRoll', { seat:currentTurn, value });
-    applyRoll(currentTurn, value);
-  }, CPU_WAIT);
+  if (!started || finished) return;
+  const p = playerBySeat(currentTurn);
+  if (p && p.isCPU) setTimeout(rollDice, 6500);
 }
 
-/* ---- Socket.IO（既定名前空間） -------------------------------------- */
-io.on('connection', (socket) => {
+io.on("connection", (socket) => {
+  if (started) {
+    socket.emit("rejected", "ゲームは進行中です。リセットすると参加できます。");
+    return;
+  }
+  // 接続時はまだ着席させない（joinSeat で着席）
+  socket.emit("joined", socket.id);
   broadcastState();
 
-  socket.on('joinSeat', ({ seat, name, routeKey }) => {
-    if (started) return;
-    seat = Number(seat);
-    if (!(seat >= 0 && seat < MAX_PLAYERS)) return;
-    if (players[seat]) return;
-    if (!name || !String(name).trim()) return;
-    if (routeKey !== 'iwamizawa' && routeKey !== 'oiwake') return;
-    for (let i = 0; i < MAX_PLAYERS; i++) {
-      if (players[i] && players[i].socketId === socket.id) players[i] = null;
+  // ===== 席に着く（名前＋ルートを1回で確定）=====
+  socket.on("joinSeat", (payload) => {
+    if (started) { socket.emit("rejected", "ゲーム進行中のため参加できません"); return; }
+    const seat = payload && typeof payload.seat === "number" ? payload.seat : -1;
+    const routeKey = payload && (payload.routeKey === "iwamizawa" || payload.routeKey === "oiwake")
+      ? payload.routeKey : "oiwake";
+    const name = String((payload && payload.name) || "").slice(0, 12) || ("P" + (seat + 1));
+
+    if (seat < 0 || seat >= MAX_PLAYERS) return;
+
+    // すでに自分が別の席に着いている場合は、その席を解放（席替え許可）
+    const mine = playerBySocket(socket.id);
+    if (mine && mine.seat !== seat) {
+      players = players.filter((p) => p.socketId !== socket.id);
     }
-    players[seat] = makePlayer(seat, String(name).trim(), routeKey, false, socket.id);
+
+    const occupant = playerBySeat(seat);
+    if (occupant && occupant.socketId !== socket.id) {
+      socket.emit("rejected", "その席は使用中です");
+      return;
+    }
+
+    if (occupant && occupant.socketId === socket.id) {
+      // 同じ席を再確定（名前・ルート更新）
+      occupant.name = name;
+      occupant.routeKey = routeKey;
+    } else {
+      players.push({
+        socketId: socket.id, seat, name,
+        pos: 0, isCPU: false, rank: 0, routeKey,
+      });
+    }
+    players.sort((a, b) => a.seat - b.seat);
+    socket.emit("seated", { seat });
     broadcastState();
   });
 
-  socket.on('leaveSeat', () => {
-    if (started) return;
-    for (let i = 0; i < MAX_PLAYERS; i++) {
-      if (players[i] && players[i].socketId === socket.id) players[i] = null;
+  socket.on("start", () => { if (!started) startGame(); });
+
+  socket.on("roll", () => {
+    if (!started || finished) return;
+    const p = playerBySeat(currentTurn);
+    if (p && p.socketId === socket.id) rollDice();
+  });
+
+  socket.on("reset", () => { resetGame(); });
+
+  socket.on("disconnect", () => {
+    if (!started) {
+      players = players.filter((x) => x.socketId !== socket.id);
+      if (humanCount() === 0) clearAll();
+      broadcastState();
+      return;
+    }
+    const p = playerBySocket(socket.id);
+    if (p) { p.isCPU = true; p.socketId = null; }
+    if (humanCount() === 0) {
+      clearAll();
+    } else {
+      const cur = playerBySeat(currentTurn);
+      if (cur && cur.isCPU) maybeRunCPU();
     }
     broadcastState();
-  });
-
-  socket.on('start', () => {
-    io.emit('event', { type:'start' });
-    startGame();
-  });
-
-  socket.on('roll', ({ value }) => {
-    let seat = -1;
-    for (let i = 0; i < MAX_PLAYERS; i++) {
-      if (players[i] && players[i].socketId === socket.id) { seat = i; break; }
-    }
-    if (seat < 0) return;
-    const v = Number(value);
-    if (!(v >= 1 && v <= 6)) return;
-    applyRoll(seat, v);
-  });
-
-  socket.on('reset', () => {
-    io.emit('event', { type:'reset' });
-    resetGame();
-  });
-
-  socket.on('disconnect', () => {
-    let changed = false;
-    for (let i = 0; i < MAX_PLAYERS; i++) {
-      if (players[i] && players[i].socketId === socket.id) {
-        if (started) {
-          players[i].isCPU = true; players[i].socketId = null; changed = true;
-          if (currentTurn === i) maybeRunCPU();
-        } else {
-          players[i] = null; changed = true;
-        }
-      }
-    }
-    if (changed) broadcastState();
   });
 });
 
-/* ---- 起動 ------------------------------------------------------------- */
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`[sugoroku] server.js v4.0 listening on ${PORT}  (2026-06-21 11:13 JST)`);
-});
+server.listen(PORT, () => console.log("listening on " + PORT));
+  

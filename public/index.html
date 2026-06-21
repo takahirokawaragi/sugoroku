@@ -1,15 +1,13 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v4.0
-     日付: 2026-06-21（日）11:35 JST
-     v4.0での変更点（v3.8現物を土台に機能のみ追加）:
-       - タイトルを「オンライン鉄道すごろく　5人用」に変更。
-         角丸の長方形＋背景色で囲うデザインを追加（虹グラデ文字は維持）。
-       - ルーレット下に案内文「ルーレットをクリックして回そう！」を追加。
-       - 「どのプレイヤーがどこにいるか」表示(#players)と
-         最終順位表示(#result)を撤去。
-       - 看板(.stSign系)・721系コマ(.train系)・盤面CSSは v3.8 現物のまま。
-     ※ server.js v3.8 / client.js v4.0 とセットで使用（PC前提）
+     バージョン: v3.8
+     日付: 2026-06-21（日）10:12 JST
+     v3.8での変更点（3ファイル同時v3.8化）:
+       - 席確定が joinSeat 方式（server.js v3.8）に対応。
+       - バッジ/ルートボタンの色制御は client.js v3.8 が動的に行う。
+       - 駅看板(.stSign系)・721系コマ(.train系)のCSSは v3.7.0 現物のまま維持。
+       - タイトルは七並べ(games/7 v2.6)と同一デザイン。
+     ※ server.js v3.8 / client.js v3.8 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -17,8 +15,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>オンライン鉄道すごろく　5人用</title>
-  <link rel="icon" href="data:," />
+  <title>オンライン鉄道すごろく</title>
   <style>
     * {
       box-sizing: border-box;
@@ -51,7 +48,7 @@
       cursor: default;
     }
 
-    /* ===== 上中央 タイトルバナー（七並べと同一デザイン＋角丸背景）===== */
+    /* ===== 上中央 タイトルバナー（七並べと同一デザイン）===== */
     .titleBanner {
       position: fixed;
       top: 8px;
@@ -59,12 +56,6 @@
       transform: translateX(-50%);
       z-index: 200;
       pointer-events: none;
-      /* v4.0：角丸の長方形＋背景色で囲う */
-      background: linear-gradient(180deg, #fff7e6, #ffe9c2);
-      border: 3px solid #e0a13a;
-      border-radius: 18px;
-      padding: 6px 26px;
-      box-shadow: 0 4px 12px rgba(0, 0, 0, .18);
     }
 
     .titleBanner .ttl {
@@ -76,29 +67,22 @@
       white-space: nowrap;
       font-family: "Hiragino Kaku Gothic StdN W9", "Hiragino Kaku Gothic StdN",
         "Hiragino Sans W9", "Hiragino Sans", "Yu Gothic", sans-serif;
-      /* フォールバック（クリップ非対応環境でも読める） */
-      color: #ff7a00;
+      background: linear-gradient(90deg,
+          #ff4d4d 0%,
+          #ff9e2c 18%,
+          #ffe14d 36%,
+          #4dd964 54%,
+          #2ec5ff 72%,
+          #b06bff 90%,
+          #ff5fd1 100%);
+      -webkit-background-clip: text;
+      background-clip: text;
+      color: transparent;
       -webkit-text-stroke: 0.9px #0d2c40;
       text-shadow:
         0 1px 1px rgba(255, 255, 255, 0.6),
         1px 2px 3px rgba(13, 44, 64, 0.35);
       user-select: none;
-    }
-
-    @supports ((-webkit-background-clip: text) or (background-clip: text)) {
-      .titleBanner .ttl {
-        background: linear-gradient(90deg,
-            #ff4d4d 0%,
-            #ff9e2c 18%,
-            #ffe14d 36%,
-            #4dd964 54%,
-            #2ec5ff 72%,
-            #b06bff 90%,
-            #ff5fd1 100%);
-        -webkit-background-clip: text;
-        background-clip: text;
-        color: transparent;
-      }
     }
 
     /* ===== 左メニュー（元すごろく式A案・フロート固定）===== */
@@ -231,10 +215,6 @@
       background: #276628;
     }
 
-    #startBtn:disabled {
-      background: #9e9e9e;
-    }
-
     #resetBtn {
       flex: 1;
       background: #d32f2f;
@@ -250,6 +230,12 @@
       color: #1b3a5b;
       margin: 8px 2px 2px;
       min-height: 14px;
+    }
+
+    #players {
+      font-size: 12px;
+      line-height: 1.6;
+      margin-top: 4px;
     }
 
     /* ===== ルーレット（右上・単体フロート固定）===== */
@@ -277,20 +263,6 @@
       display: block;
       margin: 14px auto 0;
       transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
-    }
-
-    /* v4.0：ルーレット下の案内文 */
-    #rouletteHint {
-      margin: 10px auto 0;
-      text-align: center;
-      font-weight: bold;
-      font-size: 14px;
-      color: #7a4f00;
-      background: #fff3cd;
-      border: 2px solid #e0a13a;
-      border-radius: 20px;
-      padding: 5px 14px;
-      white-space: nowrap;
     }
 
     /* ===== 盤面 ===== */
@@ -645,12 +617,38 @@
     .train .bogie i.w2 {
       right: 2px;
     }
+
+    #result {
+      position: fixed;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      max-width: 520px;
+      background: #fff;
+      border-radius: 10px;
+      padding: 12px 20px;
+      font-size: 15px;
+      line-height: 1.9;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, .2);
+      display: none;
+      z-index: 150;
+    }
+
+    #result.show {
+      display: block;
+    }
+
+    #result h2 {
+      margin: 0 0 8px;
+      font-size: 18px;
+      color: #1b3a5b;
+    }
   </style>
 </head>
 
 <body>
   <div class="titleBanner">
-    <h1 class="ttl">オンライン鉄道すごろく　5人用</h1>
+    <h1 class="ttl">オンライン鉄道すごろく</h1>
   </div>
 
   <div class="fixedPanel">
@@ -662,13 +660,12 @@
     </div>
 
     <div id="status">接続中...</div>
-    <!-- v4.0：#players(駅位置一覧) は撤去 -->
+    <div id="players"></div>
   </div>
 
   <div id="rouletteWrap">
     <div id="pointer"></div>
     <canvas id="wheel" width="360" height="360"></canvas>
-    <div id="rouletteHint">ルーレットをクリックして回そう！</div>
   </div>
 
   <div class="boardScroll">
@@ -677,7 +674,7 @@
     </div>
   </div>
 
-  <!-- v4.0：#result(最終順位表示) は撤去 -->
+  <div id="result"></div>
 
   <script src="/socket.io/socket.io.js"></script>
   <script src="/client.js"></script>
