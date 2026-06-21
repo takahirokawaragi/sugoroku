@@ -1,12 +1,13 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v3.8
-     日付: 2026-06-21（日）10:12 JST
-     v3.8での変更点（3ファイル同時v3.8化）:
-       - 席確定が joinSeat 方式（server.js v3.8）に対応。
-       - バッジ/ルートボタンの色制御は client.js v3.8 が動的に行う。
-       - 駅看板(.stSign系)・721系コマ(.train系)のCSSは v3.7.0 現物のまま維持。
-       - タイトルは七並べ(games/7 v2.6)と同一デザイン。
+     バージョン: v4.1
+     日付: 2026-06-21（日）18:59 JST
+     土台: 現物 v3.8 index.html
+     v4.1での変更点（見た目のみ・他は v3.8 現物のまま）:
+       - <title>とタイトル文字を「オンライン鉄道すごろく　5人用」に変更。
+       - .titleBanner に背景色・角丸・枠・余白・影を追加（角丸長方形で囲う）。
+       - ルーレット下に案内文「ルーレットをクリックして回そう！」(#rouletteHint)を追加。
+       - 上記以外（看板.stSign系・721系コマ.train系・盤面・席UI）は v3.8 現物のまま。
      ※ server.js v3.8 / client.js v3.8 とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
@@ -15,7 +16,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>オンライン鉄道すごろく</title>
+  <title>オンライン鉄道すごろく　5人用</title>
   <style>
     * {
       box-sizing: border-box;
@@ -48,7 +49,7 @@
       cursor: default;
     }
 
-    /* ===== 上中央 タイトルバナー（七並べと同一デザイン）===== */
+    /* ===== 上中央 タイトルバナー（v4.1: 角丸背景を追加）===== */
     .titleBanner {
       position: fixed;
       top: 8px;
@@ -56,6 +57,11 @@
       transform: translateX(-50%);
       z-index: 200;
       pointer-events: none;
+      background: rgba(255, 255, 255, 0.92);
+      border: 2px solid #c9d6e4;
+      border-radius: 16px;
+      padding: 6px 22px;
+      box-shadow: 0 3px 10px rgba(0, 0, 0, .15);
     }
 
     .titleBanner .ttl {
@@ -263,6 +269,18 @@
       display: block;
       margin: 14px auto 0;
       transition: transform 4s cubic-bezier(0.15, 0.85, 0.2, 1);
+    }
+
+    /* v4.1: ルーレット下の案内文 */
+    #rouletteHint {
+      margin: 10px auto 0;
+      text-align: center;
+      font-size: 15px;
+      font-weight: bold;
+      color: #1b3a5b;
+      background: rgba(255, 255, 255, 0.9);
+      border-radius: 10px;
+      padding: 6px 10px;
     }
 
     /* ===== 盤面 ===== */
@@ -648,7 +666,7 @@
 
 <body>
   <div class="titleBanner">
-    <h1 class="ttl">オンライン鉄道すごろく</h1>
+    <h1 class="ttl">オンライン鉄道すごろく　5人用</h1>
   </div>
 
   <div class="fixedPanel">
@@ -666,6 +684,7 @@
   <div id="rouletteWrap">
     <div id="pointer"></div>
     <canvas id="wheel" width="360" height="360"></canvas>
+    <div id="rouletteHint">ルーレットをクリックして回そう！</div>
   </div>
 
   <div class="boardScroll">
