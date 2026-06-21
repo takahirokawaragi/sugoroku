@@ -1,22 +1,21 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v4.2
-   日付: 2026-06-21（日）22:20 JST
-   土台: v4.1 client.js（=現物 v3.8 ベース）
-   v4.2での変更点:
-     1) 手番枠・「あなたの番」音・順位表示を、moves再生(アニメ)が
-        すべて終わってから反映するよう統一（サーバーが先に手番を進める
-        ため起きていた「枠ずれ・番の音抜け・順位前後」を解消）。
-     2) ゲーム開始ボタンは押下で即グレーアウトし、その後 state が
-        来ても戻さない（iStartedPressed フラグで保持）。
-     3) 開始音(start.wav)→あなたの番(your_turn.wav)の順で鳴らす
-        （start直後はyour_turnを1.4秒抑制）。
-     4) コース決定(confirmSeat)で button.mp3 を鳴らす。
-     5) ルーレット音(roll.mp3)の途切れを軽減（多重Audioプール方式）。
-     6) v4.1の機能（栗山1枚化・栗丘/由仁の距離拡大・移動音train・
-        駅一覧/順位表示の撤去・goal+gameover/rank出し分け）は維持。
+   バージョン: v4.3
+   日付: 2026-06-22（月）06:21 JST
+   土台: v4.2 client.js
+   v4.3での変更点:
+     1) 手番の枠を「画面で動かしているコマの持ち主」に完全固定。
+        - 未再生のmovesが残る間は『次に再生するmoveの人』を手番枠に。
+        - 全move再生後は『サーバーのcurrentTurn』を手番枠に。
+        renderSeats / 描画はこの displayedCurrentTurn のみを参照する。
+     2) 開始ボタンのグレーアウトは index.html v4.3 のCSS修正で見た目も反映。
+        client側は押下で disabled=true、未開始stateでも iStartedPressed
+        の間は戻さない（従来通り）。
+     3) v4.2の機能（開始音→番の順・コース決定button音・ルーレット音プール・
+        栗山1枚化・栗丘/由仁距離拡大・移動音train・駅一覧/順位表示撤去・
+        goal+gameover/rank出し分け）は維持。
      ※ 看板/コマ/ルーレット描画・座標骨格・席UIは現物のまま。
-     ※ server.js v3.8 / index.html v4.2 とセット。
+     ※ server.js v3.8 / index.html v4.3 とセット。
    ========================================================= */
 
 const socket = io();
@@ -46,7 +45,6 @@ let canRoll = false;
 
 let draftNames = ["", "", "", "", ""];
 
-// v4.2: 開始ボタン保持／番の音抑制
 let iStartedPressed = false;
 let suppressYourTurnUntil = 0;
 
@@ -62,7 +60,7 @@ const wheel = document.getElementById("wheel");
 const ctx = wheel.getContext("2d");
 
 // =========================================================
-//  駅座標テーブル（白石中心の三差路・広域図準拠）
+//  駅座標テーブル
 // =========================================================
 const MARGIN = 1800;
 const SHI_X = 3400;
@@ -79,10 +77,9 @@ const RAW_COMMON = (function () {
   return arr;
 })();
 
-// v4.1/v4.2: 栗山(index0)は共有。栗丘(index1)を上へ離す
 const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（共有起点）
-  { x: SHI_X + 1850, y: SHI_Y - 610 },  // 1 栗丘（上へ離す）
+  { x: SHI_X + 1850, y: SHI_Y - 610 },  // 1 栗丘
   { x: SHI_X + 1850, y: SHI_Y - 790 },  // 2 栗沢
   { x: SHI_X + 1850, y: SHI_Y - 970 },  // 3 志文
   { x: SHI_X + 1850, y: SHI_Y - 1150 }, // 4 岩見沢
@@ -97,10 +94,9 @@ const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 180,  y: SHI_Y - 440 },  // 13 厚別
 ];
 
-// v4.1/v4.2: 栗山(index0)は共有。由仁(index1)を右下へ離す
 const RAW_OIWAKE_BRANCH = [
-  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（共有起点・岩見沢index0と同一）
-  { x: SHI_X + 2130, y: SHI_Y + 40 },   // 1 由仁（右下へ離す）
+  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（共有起点）
+  { x: SHI_X + 2130, y: SHI_Y + 40 },   // 1 由仁
   { x: SHI_X + 2210, y: SHI_Y + 250 },  // 2 古山
   { x: SHI_X + 2240, y: SHI_Y + 480 },  // 3 三川
   { x: SHI_X + 2240, y: SHI_Y + 720 },  // 4 追分
@@ -152,7 +148,7 @@ function coordOf(routeKey, pos) {
   return COORD_OIWAKE_BRANCH[pos] || COORD_OIWAKE_BRANCH[0];
 }
 
-// ===== ルーレット右上フロート・直径=縦幅50% =====
+// ===== ルーレット =====
 (function setupWheel() {
   if (!wheel) return;
   wheel.width = 360;
@@ -167,24 +163,23 @@ function applyWheelSize() {
   wheel.style.width = d + "px";
   wheel.style.height = d + "px";
   const wrap = document.getElementById("rouletteWrap");
-  if (wrap) {
-    wrap.style.width = d + "px";
-  }
+  if (wrap) { wrap.style.width = d + "px"; }
 }
 window.addEventListener("resize", applyWheelSize);
 
 // =========================================================
-//  音（mp3/wav 再生・public/sounds/）
+//  音
 // =========================================================
 const SOUND_FILES = {
-  train: "/sounds/train.mp3",       // コマ移動
-  yourTurn: "/sounds/your_turn.wav",// 自分の番
-  start: "/sounds/start.wav",       // ゲーム開始
-  reset: "/sounds/reset.wav",       // リセット
-  rank: "/sounds/rank.mp3",         // 1〜4位ゴール
-  goal: "/sounds/goal.mp3",         // 最後のゴール
-  gameover: "/sounds/gameover.wav", // 最後のゴール（同時）
-  button: "/sounds/button.mp3",     // コース決定・各ボタン
+  train: "/sounds/train.mp3",
+  yourTurn: "/sounds/your_turn.wav",
+  start: "/sounds/start.wav",
+  reset: "/sounds/reset.wav",
+  rank: "/sounds/rank.mp3",
+  goal: "/sounds/goal.mp3",
+  gameover: "/sounds/gameover.wav",
+  button: "/sounds/button.mp3",
+  roll: "/sounds/roll.mp3",
 };
 const audioCache = {};
 let audioUnlocked = false;
@@ -200,22 +195,19 @@ function preloadSounds() {
 }
 preloadSounds();
 
-// v4.2: roll.mp3 はプール化して途切れを軽減
 const ROLL_POOL_SIZE = 6;
 const rollPool = [];
 let rollPoolIdx = 0;
 (function buildRollPool() {
   for (let i = 0; i < ROLL_POOL_SIZE; i++) {
     try {
-      const a = new Audio(SOUND_FILES.roll || "/sounds/roll.mp3");
+      const a = new Audio(SOUND_FILES.roll);
       a.preload = "auto";
       a.volume = 0.9;
       rollPool.push(a);
     } catch (e) { /* ignore */ }
   }
 })();
-// SOUND_FILES に roll を持たせておく（上の参照用）
-SOUND_FILES.roll = "/sounds/roll.mp3";
 
 function unlockAudio() {
   if (audioUnlocked) return;
@@ -258,7 +250,6 @@ function playRollOnce() {
   } catch (e) { /* ignore */ }
 }
 
-// ===== roll.mp3 をルーレット回転速度に合わせ連続再生（プール使用）=====
 let rollTickTimer = null;
 function startRollTicking() {
   let interval = 60;
@@ -379,6 +370,22 @@ function positionsUpToShown() {
   const mv = latestState.moves || [];
   mv.forEach((m) => { if (m.seq <= lastShownSeq) pos[m.index] = m.to; });
   return pos;
+}
+
+// v4.3: moves をすべて再生し終えたか
+function allMovesShownNow() {
+  const mv = (latestState && latestState.moves) || [];
+  if (mv.length === 0) return true;
+  return mv[mv.length - 1].seq === lastShownSeq;
+}
+
+// v4.3: 画面に見せる手番（=動かしているコマの持ち主）
+function displayedCurrentTurn(state) {
+  if (!state.started) return state.currentTurn;
+  const mv = state.moves || [];
+  const next = mv.find((m) => m.seq === lastShownSeq + 1);
+  if (next) return next.index;        // まだ再生する手がある→その人
+  return state.currentTurn;           // 全部再生済み→本物の手番
 }
 
 // ===== 背景路線図 SVG =====
@@ -585,13 +592,8 @@ function centerOnCell(pos, rk, smooth) {
 
 function centerOnActivePlayer(smooth) {
   if (!latestState) return;
-  let idx = -1;
-  if (latestState.started && !latestState.finished &&
-      typeof latestState.currentTurn === "number") {
-    idx = latestState.currentTurn;
-  } else {
-    idx = mySeat >= 0 ? mySeat : 0;
-  }
+  let idx = displayedCurrentTurn(latestState); // v4.3: 見せている手番に追従
+  if (typeof idx !== "number" || idx < 0) idx = mySeat >= 0 ? mySeat : 0;
   const p = latestState.players[idx];
   if (!p) return;
   const rk = p.routeKey || "oiwake";
@@ -605,7 +607,7 @@ function animateSteps(playerIndex, from, to, onDone) {
   const stepOnce = () => {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
-    playSound("train"); // コマ移動音=train.mp3
+    playSound("train");
     renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
     centerOnCell(current, rk, true);
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
@@ -613,13 +615,6 @@ function animateSteps(playerIndex, from, to, onDone) {
   };
   if (from === to) { if (onDone) onDone(); return; }
   stepOnce();
-}
-
-// v4.2: moves をすべて再生し終えたか
-function allMovesShownNow() {
-  const mv = (latestState && latestState.moves) || [];
-  if (mv.length === 0) return true;
-  return mv[mv.length - 1].seq === lastShownSeq;
 }
 
 function processNextMove() {
@@ -632,6 +627,9 @@ function processNextMove() {
   canRoll = false;
   const pl = latestState.players[next.index];
   const rk = (pl && pl.routeKey) || "oiwake";
+
+  // v4.3: この手の人を手番枠に出してから動かす
+  renderSeats(latestState);
   renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
   centerOnCell(next.from, rk, true);
 
@@ -652,12 +650,13 @@ function processNextMove() {
         }
       }
       animating = false;
+      renderSeats(latestState); // v4.3: 次の手の人へ枠を更新
       processNextMove();
     });
   });
 }
 
-// ===== ルーレットを回す =====
+// ===== ルーレット =====
 function tryRoll() {
   if (!canRoll) return;
   unlockAudio();
@@ -673,8 +672,7 @@ function renderSeats(state) {
   if (!seatsEl) return;
   seatsEl.innerHTML = "";
 
-  // v4.2: アニメ再生が終わるまでは「見せている手番」を使う
-  const shownTurn = displayedCurrentTurn(state);
+  const shownTurn = displayedCurrentTurn(state); // v4.3
 
   for (let i = 0; i < MAX_SEATS; i++) {
     const p = state.players[i];
@@ -748,7 +746,6 @@ function renderSeats(state) {
     row.appendChild(iwaBtn);
     row.appendChild(oiwBtn);
 
-    // v4.2: 順位はアニメ再生が全部終わってから表示
     const rank = document.createElement("span");
     rank.className = "seatRank";
     rank.dataset.seat = String(i);
@@ -758,17 +755,6 @@ function renderSeats(state) {
 
     seatsEl.appendChild(row);
   }
-}
-
-// v4.2: 見せている手番（アニメ中はその move の人、終わっていれば本物のcurrentTurn）
-function displayedCurrentTurn(state) {
-  if (!state.started) return state.currentTurn;
-  if (allMovesShownNow()) return state.currentTurn;
-  // 未再生の次の move の人を「今の手番」として見せる
-  const mv = state.moves || [];
-  const next = mv.find((m) => m.seq === lastShownSeq + 1);
-  if (next) return next.index;
-  return state.currentTurn;
 }
 
 function grayOut(btn) {
@@ -782,7 +768,7 @@ function ungray(btn) {
 
 function confirmSeat(seatIndex, routeKey, input) {
   unlockAudio();
-  playSound("button"); // v4.2: コース決定音=button.mp3
+  playSound("button");
   const name = (input.value || "").trim() || ("P" + (seatIndex + 1));
   draftNames[seatIndex] = name;
   socket.emit("joinSeat", { seat: seatIndex, name, routeKey });
@@ -791,15 +777,15 @@ function confirmSeat(seatIndex, routeKey, input) {
 // ===== ボタン =====
 startBtn.addEventListener("click", () => {
   unlockAudio();
-  iStartedPressed = true;        // v4.2: 押した記録
-  startBtn.disabled = true;      // v4.2: 即グレーアウト
-  playSound("start");            // 開始音=start.wav
-  suppressYourTurnUntil = Date.now() + 1400; // v4.2: 開始→番の順にする
+  iStartedPressed = true;
+  startBtn.disabled = true;
+  playSound("start");
+  suppressYourTurnUntil = Date.now() + 1400;
   socket.emit("start");
 });
 resetBtn.addEventListener("click", () => {
   unlockAudio();
-  playSound("reset");            // リセット音=reset.wav
+  playSound("reset");
   if (confirm("ゲームをリセットして最初に戻しますか？")) socket.emit("reset");
 });
 
@@ -812,7 +798,7 @@ socket.on("resetReady", () => {
   mySeat = -1;
   lastShownSeq = 0; animating = false; fanfaredIndexes = {}; currentRotation = 0;
   canRoll = false;
-  iStartedPressed = false;       // v4.2: 開始フラグ解除
+  iStartedPressed = false;
   suppressYourTurnUntil = 0;
   wheel.style.transition = "none"; wheel.style.transform = "rotate(0deg)";
   setTimeout(() => { wheel.style.transition = ""; }, 50);
@@ -842,7 +828,6 @@ function finalizeState(state) {
   renderSeats(state);
   renderBoard(positionsUpToShown());
 
-  // v4.2: 駅一覧は出さない
   if (playersEl) playersEl.innerHTML = "";
 
   const movesDone = allMovesShownNow();
@@ -851,13 +836,12 @@ function finalizeState(state) {
     if (statusEl) statusEl.textContent = "🏁 全員ゴール！ゲーム終了";
     startBtn.disabled = true; canRoll = false;
     lastMyTurn = false;
-    resultEl.classList.remove("show"); // 順位表示は出さない
+    resultEl.classList.remove("show");
     centerOnActivePlayer(true);
     return;
   }
   if (!state.started) {
     if (statusEl) statusEl.textContent = "名前を入れてルートを選び「ゲーム開始」を押してください";
-    // v4.2: 自分が開始を押していたら、未開始stateが来ても戻さない
     startBtn.disabled = iStartedPressed ? true : false;
     canRoll = false;
     lastMyTurn = false;
@@ -867,7 +851,7 @@ function finalizeState(state) {
   }
   startBtn.disabled = true;
 
-  // v4.2: 手番の確定（音・canRoll）はアニメ再生が全部終わってから
+  // v4.3: 手番確定（音・canRoll）はアニメ再生完了後のみ
   if (!movesDone || animating) {
     canRoll = false;
     return;
@@ -879,7 +863,6 @@ function finalizeState(state) {
   canRoll = !!myTurn;
 
   if (myTurn && !lastMyTurn) {
-    // v4.2: 開始直後は start.wav 優先、少し遅らせて鳴らす
     const now = Date.now();
     if (now < suppressYourTurnUntil) {
       const wait = suppressYourTurnUntil - now;
@@ -893,9 +876,8 @@ function finalizeState(state) {
   centerOnActivePlayer(true);
 }
 
-// v4.2: 順位表示は無効化（要望により非表示）
 function showResult() {
   if (resultEl) resultEl.classList.remove("show");
 }
 
-console.log("[sugoroku] client.js v4.2 ready (2026-06-21 22:20 JST)");
+console.log("[sugoroku] client.js v4.3 ready (2026-06-22 06:21 JST)");
