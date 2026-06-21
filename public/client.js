@@ -1,19 +1,16 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v4.3
-   日付: 2026-06-22（月）06:21 JST
-   土台: v4.2 client.js
-   v4.3での変更点:
-     1) 手番の枠を「画面で動かしているコマの持ち主」に完全固定。
-        - 未再生のmovesが残る間は『次に再生するmoveの人』を手番枠に。
-        - 全move再生後は『サーバーのcurrentTurn』を手番枠に。
-        renderSeats / 描画はこの displayedCurrentTurn のみを参照する。
-     2) 開始ボタンのグレーアウトは index.html v4.3 のCSS修正で見た目も反映。
-        client側は押下で disabled=true、未開始stateでも iStartedPressed
-        の間は戻さない（従来通り）。
-     3) v4.2の機能（開始音→番の順・コース決定button音・ルーレット音プール・
-        栗山1枚化・栗丘/由仁距離拡大・移動音train・駅一覧/順位表示撤去・
-        goal+gameover/rank出し分け）は維持。
+   バージョン: v4.4
+   日付: 2026-06-22（月）06:37 JST
+   土台: v4.3 client.js
+   v4.4での変更点:
+     - 順位表示が「出たり消えたり」する不具合を修正。
+       rankは一度ゴールで確定する値のため、再生状況(allMovesShownNow)に
+       関係なく rank>0 なら常に表示するようにした（renderSeatsの順位欄）。
+     - 他（手番枠=displayedCurrentTurnに固定・開始ボタングレーアウト・
+       開始音→番の順・コース決定button音・ルーレット音プール・栗山1枚化・
+       栗丘/由仁距離拡大・移動音train・駅一覧/順位オーバーレイ撤去・
+       goal+gameover/rank出し分け）は v4.3 のまま。
      ※ 看板/コマ/ルーレット描画・座標骨格・席UIは現物のまま。
      ※ server.js v3.8 / index.html v4.3 とセット。
    ========================================================= */
@@ -264,7 +261,7 @@ function stopRollTicking() {
   if (rollTickTimer) { clearTimeout(rollTickTimer); rollTickTimer = null; }
 }
 
-// ===== ルーレット描画（現物のまま）=====
+// ===== ルーレット描画 =====
 function drawWheel() {
   const size = wheel.width;
   const r = size / 2;
@@ -372,20 +369,18 @@ function positionsUpToShown() {
   return pos;
 }
 
-// v4.3: moves をすべて再生し終えたか
 function allMovesShownNow() {
   const mv = (latestState && latestState.moves) || [];
   if (mv.length === 0) return true;
   return mv[mv.length - 1].seq === lastShownSeq;
 }
 
-// v4.3: 画面に見せる手番（=動かしているコマの持ち主）
 function displayedCurrentTurn(state) {
   if (!state.started) return state.currentTurn;
   const mv = state.moves || [];
   const next = mv.find((m) => m.seq === lastShownSeq + 1);
-  if (next) return next.index;        // まだ再生する手がある→その人
-  return state.currentTurn;           // 全部再生済み→本物の手番
+  if (next) return next.index;
+  return state.currentTurn;
 }
 
 // ===== 背景路線図 SVG =====
@@ -431,7 +426,7 @@ function buildRouteSVG() {
   return svg;
 }
 
-// ===== 721系コマ（現物のまま）=====
+// ===== 721系コマ =====
 function makeTrain(colorIndex, name, dir) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -592,7 +587,7 @@ function centerOnCell(pos, rk, smooth) {
 
 function centerOnActivePlayer(smooth) {
   if (!latestState) return;
-  let idx = displayedCurrentTurn(latestState); // v4.3: 見せている手番に追従
+  let idx = displayedCurrentTurn(latestState);
   if (typeof idx !== "number" || idx < 0) idx = mySeat >= 0 ? mySeat : 0;
   const p = latestState.players[idx];
   if (!p) return;
@@ -628,7 +623,6 @@ function processNextMove() {
   const pl = latestState.players[next.index];
   const rk = (pl && pl.routeKey) || "oiwake";
 
-  // v4.3: この手の人を手番枠に出してから動かす
   renderSeats(latestState);
   renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
   centerOnCell(next.from, rk, true);
@@ -650,7 +644,7 @@ function processNextMove() {
         }
       }
       animating = false;
-      renderSeats(latestState); // v4.3: 次の手の人へ枠を更新
+      renderSeats(latestState);
       processNextMove();
     });
   });
@@ -672,7 +666,7 @@ function renderSeats(state) {
   if (!seatsEl) return;
   seatsEl.innerHTML = "";
 
-  const shownTurn = displayedCurrentTurn(state); // v4.3
+  const shownTurn = displayedCurrentTurn(state);
 
   for (let i = 0; i < MAX_SEATS; i++) {
     const p = state.players[i];
@@ -746,11 +740,11 @@ function renderSeats(state) {
     row.appendChild(iwaBtn);
     row.appendChild(oiwBtn);
 
+    // v4.4: 順位は rank が付いていれば常に表示（出たり消えたりを解消）
     const rank = document.createElement("span");
     rank.className = "seatRank";
     rank.dataset.seat = String(i);
-    const showRank = allMovesShownNow() && occupied && p.rank && p.rank > 0;
-    rank.textContent = showRank ? (p.rank + "位") : "";
+    rank.textContent = (occupied && p.rank && p.rank > 0) ? (p.rank + "位") : "";
     row.appendChild(rank);
 
     seatsEl.appendChild(row);
@@ -851,7 +845,6 @@ function finalizeState(state) {
   }
   startBtn.disabled = true;
 
-  // v4.3: 手番確定（音・canRoll）はアニメ再生完了後のみ
   if (!movesDone || animating) {
     canRoll = false;
     return;
@@ -880,4 +873,4 @@ function showResult() {
   if (resultEl) resultEl.classList.remove("show");
 }
 
-console.log("[sugoroku] client.js v4.3 ready (2026-06-22 06:21 JST)");
+console.log("[sugoroku] client.js v4.4 ready (2026-06-22 06:37 JST)");
