@@ -1,35 +1,32 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.7.2
-   日付: 2026-06-21（日）06:37 JST
-   v3.7.2での変更点:
-     - 【重要】index.html v3.7.0 の現物DOM構造に正しく合わせた。
-       (.boardScroll / #rouletteWrap / #wheel / #seats / #pointer)
-       看板・コマのCSSは index.html v3.7.0 の現物をそのまま使用。
-     - 左メニューを元のすごろく式(A案)に：
-       ・P1〜P5バッジは常時グレーアウトの飾り（席ロックなし）。
-       ・5つの名前欄はどこでも入力可。
-       ・各行の岩見沢/追分ボタンで、その席の名前＋ルートを確定。
-     - 追分ボタンの横に着順「1位〜5位」を表示（p.rank・未ゴールは空欄）。
-     - 統一プレイヤーカラーを七並べと一致：
+   バージョン: v3.8
+   日付: 2026-06-21（日）10:12 JST
+   v3.8での変更点（七並べと完全同一の席挙動へ・3ファイル同時v3.8化）:
+     - 席確定を joinSeat({ seat, name, routeKey }) 方式に変更。
+       server.js v3.8 の席管理に対応。setName/setRoute は廃止。
+       → 「隣の席に名前が入る」「他人の欄に書ける」バグを根絶。
+     - ボタンの色制御を七並べと同一に：
+       ・未確定：P1〜P5バッジも岩見沢/追分ボタンも全てグレー。
+       ・確定後：自分が選んだ席バッジ＋確定したコースボタンだけ
+         ハッキリ色表示。他はグレー。
+       ・自分の確定席のみ、名前欄が編集可（再確定で更新）。
+       ・他人の確定席はロック（名前表示のみ・操作不可）。
+     - roll.mp3 をルーレット回転速度に合わせて連続再生
+       （旧ビープ startTicking と同じく間隔を徐々に広げる方式）。
+     - 追分ボタン横に着順「1位〜5位」を表示（p.rank・未ゴールは空欄）。
+     - 統一プレイヤーカラー（七並べと一致）：
        #e53935 / #1e88e5 / #43a047 / #fb8c00 / #8e24aa。
-     - 音をビープ合成から mp3 再生へ（public/sounds/）。
-       yourTurn=手番 / button=ボタン / roll=ルーレット / goal=ゴール。
-       未配置・失敗時は無音で続行。
-     - 盤面 MARGIN を 1100→1800 へ拡大（小樽中央追従）。
-     - ルーレット右上フロート・直径50vh、描画/回転は無変更。
-     - server.js は変更不要。
-   --- 以下 過去履歴 ---
-   v3.7.0: 左メニュー七並べ式5席・ルーレット右上分離・タイトルバナー固定
-   v3.6.6: 沼ノ端を最下段へ・合流末尾を白石下側に配置し平和付近の重なり解消
-   v3.6.3: 駅座標を白石中心の三差路で全面再設計
+     - 看板・コマCSSは index.html v3.7.0 現物を維持。MARGIN=1800。
+   --- 過去履歴 ---
+   v3.7.0: 左メニュー七並べ式・ルーレット右上分離・タイトルバナー固定
+   v3.6.6: 沼ノ端を最下段へ・合流末尾を白石下側に配置し重なり解消
    v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
    v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
-   ※ server.js v3.5 / index.html v3.7.2 とセットで使うこと
+   ※ server.js v3.8 / index.html v3.8 とセットで使うこと
    ========================================================= */
 
 const socket = io();
-// 統一プレイヤーカラー（全ゲーム共通・七並べと一致）
 const COLORS = ["#e53935", "#1e88e5", "#43a047", "#fb8c00", "#8e24aa"];
 const SEGMENTS = 10;
 const MAX_SEATS = 5;
@@ -42,6 +39,7 @@ const WHEEL_COLORS = [
 const ROUTE_NAMES = { oiwake: "追分経由", iwamizawa: "岩見沢経由" };
 
 let myId = null;
+let mySeat = -1;
 let routes = { oiwake: [], iwamizawa: [] };
 let goals = { oiwake: 0, iwamizawa: 0 };
 let commonStart = { oiwake: 0, iwamizawa: 0 };
@@ -53,7 +51,6 @@ let animating = false;
 let latestState = null;
 let canRoll = false;
 
-// 5席ぶんの下書き名前（席ロックなし＝どこでも入力可）
 let draftNames = ["", "", "", "", ""];
 
 const boardEl = document.getElementById("board");
@@ -70,13 +67,10 @@ const ctx = wheel.getContext("2d");
 // =========================================================
 //  駅座標テーブル（白石中心の三差路・広域図準拠）
 // =========================================================
-// v3.7.2: 小樽（左上端）到達時もコマを画面中央へ置けるよう余白拡大
 const MARGIN = 1800;
-
 const SHI_X = 3400;
 const SHI_Y = 1400;
 
-// --- 共通区間（白石〜小樽: 左上がり一直線）---
 const COMMON_COUNT = 17;
 const COMMON_STEP_X = 250;
 const COMMON_STEP_Y = 60;
@@ -88,7 +82,6 @@ const RAW_COMMON = (function () {
   return arr;
 })();
 
-// --- 岩見沢経由 分岐（pos 0〜13）---
 const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山
   { x: SHI_X + 1850, y: SHI_Y - 430 },  // 1 栗丘
@@ -106,7 +99,6 @@ const RAW_IWAMIZAWA_BRANCH = [
   { x: SHI_X + 180,  y: SHI_Y - 260 },  // 13 厚別
 ];
 
-// --- 追分経由 分岐（pos 0〜20）---
 const RAW_OIWAKE_BRANCH = [
   { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山
   { x: SHI_X + 1980, y: SHI_Y - 80 },   // 1 由仁
@@ -161,7 +153,7 @@ function coordOf(routeKey, pos) {
   return COORD_OIWAKE_BRANCH[pos] || COORD_OIWAKE_BRANCH[0];
 }
 
-// ===== ルーレット右上フロート・直径=縦幅50%（描画/動きは無変更）=====
+// ===== ルーレット右上フロート・直径=縦幅50% =====
 (function setupWheel() {
   if (!wheel) return;
   wheel.width = 360;
@@ -235,10 +227,28 @@ function playSound(key) {
     if (p && p.catch) p.catch(() => {});
   } catch (e) { /* ignore */ }
 }
-function stopSoundFx(key) {
-  const a = audioCache[key];
-  if (!a) return;
-  try { a.pause(); a.currentTime = 0; } catch (e) {}
+
+// ===== roll.mp3 をルーレット回転速度に合わせ連続再生 =====
+let rollTickTimer = null;
+function startRollTicking() {
+  let interval = 60;
+  const tick = () => {
+    try {
+      const src = audioCache.roll;
+      if (src && src.src) {
+        const a = new Audio(src.src);
+        a.volume = 0.9;
+        const p = a.play();
+        if (p && p.catch) p.catch(() => {});
+      }
+    } catch (e) { /* ignore */ }
+    interval += 12;
+    if (interval < 280) rollTickTimer = setTimeout(tick, interval);
+  };
+  tick();
+}
+function stopRollTicking() {
+  if (rollTickTimer) { clearTimeout(rollTickTimer); rollTickTimer = null; }
 }
 
 // ===== ルーレット描画（変更なし）=====
@@ -323,7 +333,7 @@ function drawWheel() {
 drawWheel();
 
 function spinTo(dice, onStop) {
-  playSound("roll");
+  startRollTicking();
   const seg = 360 / SEGMENTS;
   const targetCenter = (dice - 1) * seg + seg / 2;
   const finalFacing = (360 - targetCenter) % 360;
@@ -332,7 +342,7 @@ function spinTo(dice, onStop) {
   if (delta < 0) delta += 360;
   currentRotation += delta + 360 * 5;
   wheel.style.transform = `rotate(${currentRotation}deg)`;
-  setTimeout(() => { stopSoundFx("roll"); if (onStop) setTimeout(onStop, 400); }, 4000);
+  setTimeout(() => { stopRollTicking(); if (onStop) setTimeout(onStop, 400); }, 4000);
 }
 
 // ===== 駅情報 =====
@@ -344,8 +354,8 @@ function stationOf(routeKey, i) {
 function positionsUpToShown() {
   const pos = {};
   latestState.players.forEach((p, i) => { pos[i] = 0; });
-  const moves = latestState.moves || [];
-  moves.forEach((m) => { if (m.seq <= lastShownSeq) pos[m.index] = m.to; });
+  const mv = latestState.moves || [];
+  mv.forEach((m) => { if (m.seq <= lastShownSeq) pos[m.index] = m.to; });
   return pos;
 }
 
@@ -392,7 +402,7 @@ function buildRouteSVG() {
   return svg;
 }
 
-// ===== 721系コマ（index.html v3.7.0 のDOM構造と一致）=====
+// ===== 721系コマ =====
 function makeTrain(colorIndex, name, dir) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -517,6 +527,7 @@ function renderBoard(positions, override) {
   });
 
   latestState.players.forEach((p, idx) => {
+    if (!p) return;
     let pos = positions[idx];
     if (override && override.idx === idx) pos = override.pos;
     const rk = p.routeKey || "oiwake";
@@ -547,8 +558,7 @@ function centerOnActivePlayer(smooth) {
       typeof latestState.currentTurn === "number") {
     idx = latestState.currentTurn;
   } else {
-    idx = latestState.players.findIndex((p) => p.id === myId);
-    if (idx < 0) idx = 0;
+    idx = mySeat >= 0 ? mySeat : 0;
   }
   const p = latestState.players[idx];
   if (!p) return;
@@ -558,7 +568,8 @@ function centerOnActivePlayer(smooth) {
 
 function animateSteps(playerIndex, from, to, onDone) {
   let current = from;
-  const rk = latestState.players[playerIndex].routeKey || "oiwake";
+  const pl = latestState.players[playerIndex];
+  const rk = (pl && pl.routeKey) || "oiwake";
   const stepOnce = () => {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
@@ -573,13 +584,14 @@ function animateSteps(playerIndex, from, to, onDone) {
 
 function processNextMove() {
   if (animating || !latestState) return;
-  const moves = latestState.moves || [];
-  const next = moves.find((m) => m.seq === lastShownSeq + 1);
+  const mv = latestState.moves || [];
+  const next = mv.find((m) => m.seq === lastShownSeq + 1);
   if (!next) { finalizeState(latestState); return; }
 
   animating = true;
   canRoll = false;
-  const rk = latestState.players[next.index].routeKey || "oiwake";
+  const pl = latestState.players[next.index];
+  const rk = (pl && pl.routeKey) || "oiwake";
   renderBoard(positionsUpToShown(), { idx: next.index, pos: next.from });
   centerOnCell(next.from, rk, true);
 
@@ -606,95 +618,119 @@ function tryRoll() {
 wheel.addEventListener("click", tryRoll);
 
 // =========================================================
-//  5席メニュー（元すごろく式・A案）
+//  5席メニュー（七並べと同一の挙動）
 // =========================================================
 function renderSeats(state) {
   if (!seatsEl) return;
   seatsEl.innerHTML = "";
 
   for (let i = 0; i < MAX_SEATS; i++) {
-    const p = state.players[i];
-    const isOccupied = !!p;
-    const isCurrent = state.started && !state.finished && state.currentTurn === i && isOccupied;
+    const p = state.players[i];   // null=空席
+    const occupied = !!p;
+    const isMine = occupied && p.id === myId;
+    const isCurrent = state.started && !state.finished && state.currentTurn === i && occupied;
 
     const row = document.createElement("div");
     row.className = "seat";
-    if (!isOccupied) row.classList.add("empty");
+    if (!occupied) row.classList.add("empty");
     if (isCurrent) {
       row.classList.add("current");
       row.style.borderColor = COLORS[i];
     }
 
-    // P1〜P5バッジ：常時グレーアウトの飾り
+    // P1〜P5バッジ：確定席だけ色表示、それ以外はグレー（常に押せない飾り）
     const badge = document.createElement("button");
     badge.className = "seatBadge";
-    badge.style.background = COLORS[i];
     badge.textContent = "P" + (i + 1);
     badge.disabled = true;
+    badge.style.opacity = "1";
+    badge.style.background = occupied ? COLORS[i] : "#9bb4cc";
     row.appendChild(badge);
 
-    // 名前欄：席ロックなし＝どこでも入力可
+    // 名前欄
     const input = document.createElement("input");
     input.className = "seatName";
     input.type = "text";
     input.maxLength = 12;
     input.placeholder = "なまえ";
-    if (isOccupied) {
-      const confirmed = p.name && !/^Player\d+$/.test(p.name);
-      input.value = confirmed ? p.name : (draftNames[i] || "");
+    if (occupied) {
+      input.value = p.name;
+      input.disabled = !isMine || state.started; // 自分の席のみ編集可
     } else {
       input.value = draftNames[i] || "";
+      // 既に自分が着席済みなら、他の空席欄は触らせない（七並べと同じ1人1席）
+      input.disabled = state.started || (mySeat >= 0);
     }
-    input.disabled = state.started;
     input.addEventListener("input", (e) => { draftNames[i] = e.target.value; });
     row.appendChild(input);
 
-    // 岩見沢ボタン
+    // 岩見沢/追分ボタン
     const iwaBtn = document.createElement("button");
     iwaBtn.className = "seatRouteBtn iwa";
     iwaBtn.textContent = "岩見沢";
-    // 追分ボタン
     const oiwBtn = document.createElement("button");
     oiwBtn.className = "seatRouteBtn oiw";
     oiwBtn.textContent = "追分";
 
-    if (isOccupied) {
+    // 色制御：確定済みは「選んだコースだけ色・もう片方はグレー」、未確定は両方グレー
+    if (occupied) {
       const rk = p.routeKey || "oiwake";
-      if (rk === "iwamizawa") iwaBtn.classList.add("selected");
-      else oiwBtn.classList.add("selected");
+      if (rk === "iwamizawa") { iwaBtn.classList.add("selected"); grayOut(oiwBtn); }
+      else { oiwBtn.classList.add("selected"); grayOut(iwaBtn); }
+    } else {
+      grayOut(iwaBtn);
+      grayOut(oiwBtn);
     }
 
-    if (!state.started) {
+    // クリック可否
+    const canClickEmpty = !occupied && mySeat < 0 && !state.started;
+    const canClickMine  = isMine && !state.started;
+
+    if (canClickEmpty || canClickMine) {
+      ungray(iwaBtn); ungray(oiwBtn);
+      // 確定済み側の色（selected）は維持しつつ、もう片方も押せるようにする
+      if (occupied) {
+        const rk = p.routeKey || "oiwake";
+        if (rk === "iwamizawa") oiwBtn.classList.remove("selected"); else iwaBtn.classList.remove("selected");
+      }
       iwaBtn.addEventListener("click", () => confirmSeat(i, "iwamizawa", input));
       oiwBtn.addEventListener("click", () => confirmSeat(i, "oiwake", input));
     } else {
       iwaBtn.disabled = true;
       oiwBtn.disabled = true;
     }
+
     row.appendChild(iwaBtn);
     row.appendChild(oiwBtn);
 
-    // 追分ボタンの横に着順「1位〜5位」（未ゴールは空欄）
+    // 追分ボタン横の着順「1位〜5位」（未ゴールは空欄）
     const rank = document.createElement("span");
     rank.className = "seatRank";
     rank.dataset.seat = String(i);
-    rank.textContent = (isOccupied && p.rank && p.rank > 0) ? (p.rank + "位") : "";
+    rank.textContent = (occupied && p.rank && p.rank > 0) ? (p.rank + "位") : "";
     row.appendChild(rank);
 
     seatsEl.appendChild(row);
   }
 }
 
-// 名前＋ルートを確定
+// グレーアウト表現
+function grayOut(btn) {
+  btn.style.background = "#9bb4cc";
+  btn.style.opacity = ".7";
+}
+function ungray(btn) {
+  btn.style.opacity = "1";
+  btn.style.background = ""; // .iwa/.oiw のCSSに戻す
+}
+
+// 席に着く（名前＋コースを1回で確定＝joinSeat）
 function confirmSeat(seatIndex, routeKey, input) {
   unlockAudio();
   playSound("button");
-  const name = (input.value || "").trim();
-  if (name) {
-    draftNames[seatIndex] = name;
-    socket.emit("setName", name);
-  }
-  socket.emit("setRoute", routeKey);
+  const name = (input.value || "").trim() || ("P" + (seatIndex + 1));
+  draftNames[seatIndex] = name;
+  socket.emit("joinSeat", { seat: seatIndex, name, routeKey });
 }
 
 // ===== ボタン =====
@@ -705,11 +741,13 @@ resetBtn.addEventListener("click", () => {
   if (confirm("ゲームをリセットして最初に戻しますか？")) socket.emit("reset");
 });
 
-socket.on("joined", (id) => { myId = id; });
-socket.on("rejected", (msg) => { statusEl.textContent = msg; startBtn.disabled = true; canRoll = false; });
+socket.on("joined", (id) => { myId = id; mySeat = -1; });
+socket.on("seated", ({ seat }) => { mySeat = seat; });
+socket.on("rejected", (msg) => { if (statusEl) statusEl.textContent = msg; });
 
 socket.on("resetReady", () => {
   draftNames = ["", "", "", "", ""];
+  mySeat = -1;
   lastShownSeq = 0; animating = false; fanfaredIndexes = {}; currentRotation = 0;
   canRoll = false;
   wheel.style.transition = "none"; wheel.style.transform = "rotate(0deg)";
@@ -728,6 +766,10 @@ socket.on("state", (state) => {
   commonStart = state.commonStart || commonStart;
   if (!state.started) { lastShownSeq = 0; animating = false; fanfaredIndexes = {}; }
   latestState = state;
+  if (mySeat < 0) {
+    const meIdx = state.players.findIndex((p) => p && p.id === myId);
+    if (meIdx >= 0) mySeat = meIdx;
+  }
   if (!state.started || state.finished) finalizeState(state);
   processNextMove();
 });
@@ -739,10 +781,12 @@ function finalizeState(state) {
   if (playersEl) {
     playersEl.innerHTML = state.players
       .map((p, idx) => {
+        if (!p) return "";
         const rk = p.routeKey || "oiwake";
         const st = stationOf(rk, p.pos);
         return `<span style="color:${COLORS[idx]}">●</span>${p.name}（${ROUTE_NAMES[rk]}・${st.kanji}）`;
       })
+      .filter((s) => s)
       .join("　");
   }
 
@@ -781,7 +825,7 @@ function finalizeState(state) {
 
 function showResult(state) {
   if (!state.finished) { resultEl.classList.remove("show"); return; }
-  const ranked = [...state.players].filter((p) => p.rank > 0).sort((a, b) => a.rank - b.rank);
+  const ranked = state.players.filter((p) => p && p.rank > 0).sort((a, b) => a.rank - b.rank);
   resultEl.innerHTML = "<h2>🏁 結果</h2>" +
     ranked.map((p) => `${p.rank}位：${p.name}（${ROUTE_NAMES[p.routeKey || "oiwake"]}）`).join("<br>");
   resultEl.classList.add("show");
