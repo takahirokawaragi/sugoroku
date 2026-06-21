@@ -1,29 +1,21 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v3.8
-   日付: 2026-06-21（日）10:12 JST
-   v3.8での変更点（七並べと完全同一の席挙動へ・3ファイル同時v3.8化）:
-     - 席確定を joinSeat({ seat, name, routeKey }) 方式に変更。
-       server.js v3.8 の席管理に対応。setName/setRoute は廃止。
-       → 「隣の席に名前が入る」「他人の欄に書ける」バグを根絶。
-     - ボタンの色制御を七並べと同一に：
-       ・未確定：P1〜P5バッジも岩見沢/追分ボタンも全てグレー。
-       ・確定後：自分が選んだ席バッジ＋確定したコースボタンだけ
-         ハッキリ色表示。他はグレー。
-       ・自分の確定席のみ、名前欄が編集可（再確定で更新）。
-       ・他人の確定席はロック（名前表示のみ・操作不可）。
-     - roll.mp3 をルーレット回転速度に合わせて連続再生
-       （旧ビープ startTicking と同じく間隔を徐々に広げる方式）。
-     - 追分ボタン横に着順「1位〜5位」を表示（p.rank・未ゴールは空欄）。
-     - 統一プレイヤーカラー（七並べと一致）：
-       #e53935 / #1e88e5 / #43a047 / #fb8c00 / #8e24aa。
-     - 看板・コマCSSは index.html v3.7.0 現物を維持。MARGIN=1800。
-   --- 過去履歴 ---
-   v3.7.0: 左メニュー七並べ式・ルーレット右上分離・タイトルバナー固定
-   v3.6.6: 沼ノ端を最下段へ・合流末尾を白石下側に配置し重なり解消
-   v3.6.0: 盤面を背景路線図(SVG)＋駅マス絶対配置方式に変更
-   v3.5.2: 721系コマ作り直し・赤青丸廃止し横帯で識別・名前全表示
-   ※ server.js v3.8 / index.html v3.8 とセットで使うこと
+   バージョン: v4.1
+   日付: 2026-06-21（日）19:08 JST
+   土台: 現物 v3.8 client.js
+   v4.1での変更点（現物v3.8をベースに必要箇所のみ）:
+     1) 栗山の分裂を修正：分岐index0(栗山)を岩見沢/追分で共有し1枚だけ描画。
+     2) 栗山→栗丘(岩見沢index1)を上へ、栗山→由仁(追分index1)を右下へ離す。
+     3) 音をファイル名どおりに差し替え：
+        train.mp3(コマ移動) / your_turn.wav(自分の番) /
+        start.wav(開始) / reset.wav(リセット) /
+        rank.mp3(1〜4位ゴール) / goal.mp3 + gameover.wav(最後のゴール) /
+        roll.mp3(ルーレット回転)。
+     4) プレイヤーの駅一覧表示(#players)を非表示（中身を出さない）。
+     5) 最後の順位表示(#result)を非表示（showResultを無効化）。
+     6) ゲーム開始ボタンは押下で即グレーアウト。
+     ※ 看板/コマ/ルーレット描画・座標骨格・席UIは現物のまま。
+     ※ server.js v3.8 / index.html v4.1 とセットで使用。
    ========================================================= */
 
 const socket = io();
@@ -82,45 +74,47 @@ const RAW_COMMON = (function () {
   return arr;
 })();
 
+// v4.1: 栗山(index0)は共有。栗丘(index1)を上へ離す（y をさらに -180 拡大）
 const RAW_IWAMIZAWA_BRANCH = [
-  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山
-  { x: SHI_X + 1850, y: SHI_Y - 430 },  // 1 栗丘
-  { x: SHI_X + 1850, y: SHI_Y - 610 },  // 2 栗沢
-  { x: SHI_X + 1850, y: SHI_Y - 790 },  // 3 志文
-  { x: SHI_X + 1850, y: SHI_Y - 970 },  // 4 岩見沢
-  { x: SHI_X + 1600, y: SHI_Y - 970 },  // 5 上幌向
-  { x: SHI_X + 1360, y: SHI_Y - 940 },  // 6 幌向
-  { x: SHI_X + 1140, y: SHI_Y - 870 },  // 7 豊幌
-  { x: SHI_X + 940,  y: SHI_Y - 780 },  // 8 江別
-  { x: SHI_X + 760,  y: SHI_Y - 690 },  // 9 高砂
-  { x: SHI_X + 600,  y: SHI_Y - 590 },  // 10 野幌
-  { x: SHI_X + 450,  y: SHI_Y - 490 },  // 11 大麻
-  { x: SHI_X + 310,  y: SHI_Y - 380 },  // 12 森林公園
-  { x: SHI_X + 180,  y: SHI_Y - 260 },  // 13 厚別
+  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（共有起点）
+  { x: SHI_X + 1850, y: SHI_Y - 610 },  // 1 栗丘（v4.1: 上へ離す）
+  { x: SHI_X + 1850, y: SHI_Y - 790 },  // 2 栗沢
+  { x: SHI_X + 1850, y: SHI_Y - 970 },  // 3 志文
+  { x: SHI_X + 1850, y: SHI_Y - 1150 }, // 4 岩見沢
+  { x: SHI_X + 1600, y: SHI_Y - 1150 }, // 5 上幌向
+  { x: SHI_X + 1360, y: SHI_Y - 1120 }, // 6 幌向
+  { x: SHI_X + 1140, y: SHI_Y - 1050 }, // 7 豊幌
+  { x: SHI_X + 940,  y: SHI_Y - 960 },  // 8 江別
+  { x: SHI_X + 760,  y: SHI_Y - 870 },  // 9 高砂
+  { x: SHI_X + 600,  y: SHI_Y - 770 },  // 10 野幌
+  { x: SHI_X + 450,  y: SHI_Y - 670 },  // 11 大麻
+  { x: SHI_X + 310,  y: SHI_Y - 560 },  // 12 森林公園
+  { x: SHI_X + 180,  y: SHI_Y - 440 },  // 13 厚別
 ];
 
+// v4.1: 栗山(index0)は共有。由仁(index1)を右下へ離す
 const RAW_OIWAKE_BRANCH = [
-  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山
-  { x: SHI_X + 1980, y: SHI_Y - 80 },   // 1 由仁
-  { x: SHI_X + 2060, y: SHI_Y + 100 },  // 2 古山
-  { x: SHI_X + 2090, y: SHI_Y + 320 },  // 3 三川
-  { x: SHI_X + 2090, y: SHI_Y + 560 },  // 4 追分
-  { x: SHI_X + 1870, y: SHI_Y + 760 },  // 5 安平
-  { x: SHI_X + 1630, y: SHI_Y + 960 },  // 6 早来
-  { x: SHI_X + 1400, y: SHI_Y + 1150 }, // 7 遠浅
-  { x: SHI_X + 1180, y: SHI_Y + 1300 }, // 8 沼ノ端
-  { x: SHI_X + 1180, y: SHI_Y + 1080 }, // 9 植苗
-  { x: SHI_X + 1180, y: SHI_Y + 900 },  // 10 南千歳
-  { x: SHI_X + 1180, y: SHI_Y + 740 },  // 11 千歳
-  { x: SHI_X + 1180, y: SHI_Y + 580 },  // 12 長都
-  { x: SHI_X + 1180, y: SHI_Y + 420 },  // 13 サッポロビール庭園
-  { x: SHI_X + 1180, y: SHI_Y + 260 },  // 14 恵庭
-  { x: SHI_X + 1180, y: SHI_Y + 100 },  // 15 恵み野
-  { x: SHI_X + 1180, y: SHI_Y - 60 },   // 16 島松
-  { x: SHI_X + 1180, y: SHI_Y - 220 },  // 17 北広島
-  { x: SHI_X + 880,  y: SHI_Y + 120 },  // 18 上野幌
-  { x: SHI_X + 560,  y: SHI_Y + 280 },  // 19 新札幌
-  { x: SHI_X + 240,  y: SHI_Y + 360 },  // 20 平和
+  { x: SHI_X + 1850, y: SHI_Y - 250 },  // 0 栗山（共有起点・岩見沢index0と同一）
+  { x: SHI_X + 2130, y: SHI_Y + 40 },   // 1 由仁（v4.1: 右下へ離す）
+  { x: SHI_X + 2210, y: SHI_Y + 250 },  // 2 古山
+  { x: SHI_X + 2240, y: SHI_Y + 480 },  // 3 三川
+  { x: SHI_X + 2240, y: SHI_Y + 720 },  // 4 追分
+  { x: SHI_X + 2020, y: SHI_Y + 920 },  // 5 安平
+  { x: SHI_X + 1780, y: SHI_Y + 1120 }, // 6 早来
+  { x: SHI_X + 1550, y: SHI_Y + 1310 }, // 7 遠浅
+  { x: SHI_X + 1330, y: SHI_Y + 1460 }, // 8 沼ノ端
+  { x: SHI_X + 1330, y: SHI_Y + 1240 }, // 9 植苗
+  { x: SHI_X + 1330, y: SHI_Y + 1060 }, // 10 南千歳
+  { x: SHI_X + 1330, y: SHI_Y + 900 },  // 11 千歳
+  { x: SHI_X + 1330, y: SHI_Y + 740 },  // 12 長都
+  { x: SHI_X + 1330, y: SHI_Y + 580 },  // 13 サッポロビール庭園
+  { x: SHI_X + 1330, y: SHI_Y + 420 },  // 14 恵庭
+  { x: SHI_X + 1330, y: SHI_Y + 260 },  // 15 恵み野
+  { x: SHI_X + 1330, y: SHI_Y + 100 },  // 16 島松
+  { x: SHI_X + 1330, y: SHI_Y - 60 },   // 17 北広島
+  { x: SHI_X + 1030, y: SHI_Y + 260 },  // 18 上野幌
+  { x: SHI_X + 710,  y: SHI_Y + 420 },  // 19 新札幌
+  { x: SHI_X + 390,  y: SHI_Y + 500 },  // 20 平和
 ];
 
 const ALL_RAW = RAW_IWAMIZAWA_BRANCH.concat(RAW_OIWAKE_BRANCH, RAW_COMMON);
@@ -170,19 +164,22 @@ function applyWheelSize() {
   const wrap = document.getElementById("rouletteWrap");
   if (wrap) {
     wrap.style.width = d + "px";
-    wrap.style.height = (d + 18) + "px";
   }
 }
 window.addEventListener("resize", applyWheelSize);
 
 // =========================================================
-//  音（mp3/wav 再生・public/sounds/）
+//  音（mp3/wav 再生・public/sounds/）  ※ v4.1: ファイル名を要望どおりに
 // =========================================================
 const SOUND_FILES = {
-  yourTurn: "/sounds/yourTurn.mp3",
-  button: "/sounds/button.mp3",
-  roll: "/sounds/roll.mp3",
-  goal: "/sounds/goal.mp3",
+  train: "/sounds/train.mp3",       // コマ移動
+  yourTurn: "/sounds/your_turn.wav",// 自分の番
+  start: "/sounds/start.wav",       // ゲーム開始
+  reset: "/sounds/reset.wav",       // リセット
+  rank: "/sounds/rank.mp3",         // 1〜4位ゴール
+  goal: "/sounds/goal.mp3",         // 最後のゴール
+  gameover: "/sounds/gameover.wav", // 最後のゴール（同時）
+  roll: "/sounds/roll.mp3",         // ルーレット回転
 };
 const audioCache = {};
 let audioUnlocked = false;
@@ -251,7 +248,7 @@ function stopRollTicking() {
   if (rollTickTimer) { clearTimeout(rollTickTimer); rollTickTimer = null; }
 }
 
-// ===== ルーレット描画（変更なし）=====
+// ===== ルーレット描画（現物のまま）=====
 function drawWheel() {
   const size = wheel.width;
   const r = size / 2;
@@ -402,7 +399,7 @@ function buildRouteSVG() {
   return svg;
 }
 
-// ===== 721系コマ =====
+// ===== 721系コマ（現物のまま）=====
 function makeTrain(colorIndex, name, dir) {
   const wrap = document.createElement("div");
   wrap.className = "pawnWrap";
@@ -508,8 +505,20 @@ function renderBoard(positions, override) {
     const arr = routes[rk] || [];
     const cs = commonStart[rk];
     for (let pos = 0; pos < arr.length; pos++) {
+      // v4.1: 共通区間は共有
       if (typeof cs === "number" && pos >= cs) {
         const ckey = "C:" + (pos - cs);
+        if (coordCellDrawn[ckey]) {
+          cellMap[rk + ":" + pos] = coordCellDrawn[ckey];
+          continue;
+        }
+        const cell = makeCell(rk, pos);
+        boardEl.appendChild(cell);
+        coordCellDrawn[ckey] = cell;
+        cellMap[rk + ":" + pos] = cell;
+      } else if (pos === 0) {
+        // v4.1: 栗山(分岐index0)は両ルート共有で1枚だけ描画
+        const ckey = "KURIYAMA";
         if (coordCellDrawn[ckey]) {
           cellMap[rk + ":" + pos] = coordCellDrawn[ckey];
           continue;
@@ -573,6 +582,7 @@ function animateSteps(playerIndex, from, to, onDone) {
   const stepOnce = () => {
     if (current >= to) { if (onDone) onDone(); return; }
     current += 1;
+    playSound("train"); // v4.1: コマ移動音=train.mp3
     renderBoard(positionsUpToShown(), { idx: playerIndex, pos: current });
     centerOnCell(current, rk, true);
     if (current >= to) { if (onDone) setTimeout(onDone, 300); return; }
@@ -600,7 +610,19 @@ function processNextMove() {
       lastShownSeq = next.seq;
       if (next.to >= goals[rk] && !fanfaredIndexes[next.index]) {
         fanfaredIndexes[next.index] = true;
-        playSound("goal");
+        // v4.1: ゴール音を順位で出し分け
+        const finishedCount = latestState.players.filter(
+          (pp) => pp && pp.rank && pp.rank > 0
+        ).length;
+        const activeCount = latestState.players.filter((pp) => !!pp).length;
+        if (finishedCount >= activeCount) {
+          // 最後のプレイヤー：goal.mp3 + gameover.wav 同時
+          playSound("goal");
+          playSound("gameover");
+        } else {
+          // 1〜4位：rank.mp3
+          playSound("rank");
+        }
       }
       animating = false;
       processNextMove();
@@ -618,14 +640,14 @@ function tryRoll() {
 wheel.addEventListener("click", tryRoll);
 
 // =========================================================
-//  5席メニュー（七並べと同一の挙動）
+//  5席メニュー（七並べと同一の挙動・現物のまま）
 // =========================================================
 function renderSeats(state) {
   if (!seatsEl) return;
   seatsEl.innerHTML = "";
 
   for (let i = 0; i < MAX_SEATS; i++) {
-    const p = state.players[i];   // null=空席
+    const p = state.players[i];
     const occupied = !!p;
     const isMine = occupied && p.id === myId;
     const isCurrent = state.started && !state.finished && state.currentTurn === i && occupied;
@@ -638,7 +660,6 @@ function renderSeats(state) {
       row.style.borderColor = COLORS[i];
     }
 
-    // P1〜P5バッジ：確定席だけ色表示、それ以外はグレー（常に押せない飾り）
     const badge = document.createElement("button");
     badge.className = "seatBadge";
     badge.textContent = "P" + (i + 1);
@@ -647,7 +668,6 @@ function renderSeats(state) {
     badge.style.background = occupied ? COLORS[i] : "#9bb4cc";
     row.appendChild(badge);
 
-    // 名前欄
     const input = document.createElement("input");
     input.className = "seatName";
     input.type = "text";
@@ -655,16 +675,14 @@ function renderSeats(state) {
     input.placeholder = "なまえ";
     if (occupied) {
       input.value = p.name;
-      input.disabled = !isMine || state.started; // 自分の席のみ編集可
+      input.disabled = !isMine || state.started;
     } else {
       input.value = draftNames[i] || "";
-      // 既に自分が着席済みなら、他の空席欄は触らせない（七並べと同じ1人1席）
       input.disabled = state.started || (mySeat >= 0);
     }
     input.addEventListener("input", (e) => { draftNames[i] = e.target.value; });
     row.appendChild(input);
 
-    // 岩見沢/追分ボタン
     const iwaBtn = document.createElement("button");
     iwaBtn.className = "seatRouteBtn iwa";
     iwaBtn.textContent = "岩見沢";
@@ -672,7 +690,6 @@ function renderSeats(state) {
     oiwBtn.className = "seatRouteBtn oiw";
     oiwBtn.textContent = "追分";
 
-    // 色制御：確定済みは「選んだコースだけ色・もう片方はグレー」、未確定は両方グレー
     if (occupied) {
       const rk = p.routeKey || "oiwake";
       if (rk === "iwamizawa") { iwaBtn.classList.add("selected"); grayOut(oiwBtn); }
@@ -682,13 +699,11 @@ function renderSeats(state) {
       grayOut(oiwBtn);
     }
 
-    // クリック可否
     const canClickEmpty = !occupied && mySeat < 0 && !state.started;
     const canClickMine  = isMine && !state.started;
 
     if (canClickEmpty || canClickMine) {
       ungray(iwaBtn); ungray(oiwBtn);
-      // 確定済み側の色（selected）は維持しつつ、もう片方も押せるようにする
       if (occupied) {
         const rk = p.routeKey || "oiwake";
         if (rk === "iwamizawa") oiwBtn.classList.remove("selected"); else iwaBtn.classList.remove("selected");
@@ -703,7 +718,6 @@ function renderSeats(state) {
     row.appendChild(iwaBtn);
     row.appendChild(oiwBtn);
 
-    // 追分ボタン横の着順「1位〜5位」（未ゴールは空欄）
     const rank = document.createElement("span");
     rank.className = "seatRank";
     rank.dataset.seat = String(i);
@@ -714,30 +728,32 @@ function renderSeats(state) {
   }
 }
 
-// グレーアウト表現
 function grayOut(btn) {
   btn.style.background = "#9bb4cc";
   btn.style.opacity = ".7";
 }
 function ungray(btn) {
   btn.style.opacity = "1";
-  btn.style.background = ""; // .iwa/.oiw のCSSに戻す
+  btn.style.background = "";
 }
 
-// 席に着く（名前＋コースを1回で確定＝joinSeat）
 function confirmSeat(seatIndex, routeKey, input) {
   unlockAudio();
-  playSound("button");
   const name = (input.value || "").trim() || ("P" + (seatIndex + 1));
   draftNames[seatIndex] = name;
   socket.emit("joinSeat", { seat: seatIndex, name, routeKey });
 }
 
 // ===== ボタン =====
-startBtn.addEventListener("click", () => { unlockAudio(); playSound("button"); socket.emit("start"); });
+startBtn.addEventListener("click", () => {
+  unlockAudio();
+  playSound("start");          // v4.1: 開始音=start.wav
+  startBtn.disabled = true;    // v4.1: 押下で即グレーアウト
+  socket.emit("start");
+});
 resetBtn.addEventListener("click", () => {
   unlockAudio();
-  playSound("button");
+  playSound("reset");          // v4.1: リセット音=reset.wav
   if (confirm("ゲームをリセットして最初に戻しますか？")) socket.emit("reset");
 });
 
@@ -778,26 +794,18 @@ function finalizeState(state) {
   renderSeats(state);
   renderBoard(positionsUpToShown());
 
-  if (playersEl) {
-    playersEl.innerHTML = state.players
-      .map((p, idx) => {
-        if (!p) return "";
-        const rk = p.routeKey || "oiwake";
-        const st = stationOf(rk, p.pos);
-        return `<span style="color:${COLORS[idx]}">●</span>${p.name}（${ROUTE_NAMES[rk]}・${st.kanji}）`;
-      })
-      .filter((s) => s)
-      .join("　");
-  }
+  // v4.1: プレイヤーの駅一覧表示は出さない
+  if (playersEl) playersEl.innerHTML = "";
 
   const allMovesShown = !state.moves || state.moves.length === 0 ||
     state.moves[state.moves.length - 1].seq === lastShownSeq;
 
   if (state.finished && allMovesShown && !animating) {
-    if (statusEl) statusEl.textContent = "🏁 全員ゴール（小樽）！ゲーム終了";
+    if (statusEl) statusEl.textContent = "🏁 全員ゴール！ゲーム終了";
     startBtn.disabled = true; canRoll = false;
     lastMyTurn = false;
-    showResult(state);
+    // v4.1: 最後の順位表示は出さない
+    resultEl.classList.remove("show");
     centerOnActivePlayer(true);
     return;
   }
@@ -816,18 +824,16 @@ function finalizeState(state) {
   canRoll = !!myTurn && !animating;
 
   if (myTurn && !lastMyTurn && !animating) {
-    playSound("yourTurn");
+    playSound("yourTurn"); // v4.1: 自分の番=your_turn.wav
   }
   lastMyTurn = !!myTurn;
 
   if (!animating) centerOnActivePlayer(true);
 }
 
-function showResult(state) {
-  if (!state.finished) { resultEl.classList.remove("show"); return; }
-  const ranked = state.players.filter((p) => p && p.rank > 0).sort((a, b) => a.rank - b.rank);
-  resultEl.innerHTML = "<h2>🏁 結果</h2>" +
-    ranked.map((p) => `${p.rank}位：${p.name}（${ROUTE_NAMES[p.routeKey || "oiwake"]}）`).join("<br>");
-  resultEl.classList.add("show");
+// v4.1: 最後の順位表示は無効化（要望により非表示）
+function showResult() {
+  if (resultEl) resultEl.classList.remove("show");
 }
 
+console.log("[sugoroku] client.js v4.1 ready (2026-06-21 19:08 JST)");
