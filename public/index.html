@@ -1,15 +1,14 @@
 <!-- ============================================================
      ファイル: public/index.html
-     バージョン: v4.3
-     日付: 2026-06-22（月）06:21 JST
-     土台: v4.2 index.html
-     v4.3での変更点:
-       - 開始ボタンの disabled 見た目を修正。#startBtn(ID指定)の緑が
-         button:disabled に勝っていたため、#startBtn:disabled を明示し
-         グレーアウトを確実に表示するようにした。
-       - 他（タイトル/角丸背景/ルーレット案内文の枠線/看板/コマ/盤面/席UI）
-         は v4.2 のまま。
-     ※ server.js v3.8 / client.js v4.3 とセットで使用（PC前提）
+     バージョン: v4.5
+     日付: 2026-06-22（月）10:43 JST
+     土台: v4.3 index.html
+     v4.5での変更点:
+       - <head> に favicon.svg の読み込みを追加（/favicon.ico の404解消）。
+         ファビコンはルーレットと同デザイン（public/favicon.svg）。
+       - 他（タイトル/角丸背景/ルーレット案内文の枠線/開始ボタンの
+         グレーアウト/看板/コマ/盤面/席UI）は v4.3 のまま。
+     ※ server.js v3.8 / client.js v4.5 / favicon.svg とセットで使用（PC前提）
      ============================================================ -->
 <!DOCTYPE html>
 <html lang="ja">
@@ -18,6 +17,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>オンライン鉄道すごろく　5人用</title>
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
   <style>
     * {
       box-sizing: border-box;

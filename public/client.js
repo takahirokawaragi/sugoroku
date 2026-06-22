@@ -1,18 +1,24 @@
 /* =========================================================
    すごろくゲーム  client.js
-   バージョン: v4.4
-   日付: 2026-06-22（月）06:37 JST
-   土台: v4.3 client.js
-   v4.4での変更点:
-     - 順位表示が「出たり消えたり」する不具合を修正。
-       rankは一度ゴールで確定する値のため、再生状況(allMovesShownNow)に
-       関係なく rank>0 なら常に表示するようにした（renderSeatsの順位欄）。
+   バージョン: v4.5
+   日付: 2026-06-22（月）10:37 JST
+   土台: v4.4 client.js
+   v4.5での変更点:
+     - 順位表示のタイミングを修正。
+       これまでは state を受け取った瞬間（=ルーレットを回した瞬間/コマ移動中）に
+       rank>0 で即表示していたため「ルーレットと同時に順位が出る」問題があった。
+       v4.5 では「そのコマがアニメでゴールに到着した（fanfaredIndexes[i]=true）」
+       タイミングでのみ順位を表示する。到着した人から順に、全員の画面で点灯する。
+     - 「あなたの番です」が鳴らないことがある不具合を修正。
+       lastMyTurn による立ち上がりエッジ判定では取りこぼしが起きていたため、
+       「いまの手番(state.currentTurn)でまだ鳴らしていなければ必ず鳴らす」方式へ
+       変更（yourTurnPlayedForTurn で二重再生も防止）。
+     - favicon.svg をルーレットと同デザインで追加（index.html v4.5 で読込）。
      - 他（手番枠=displayedCurrentTurnに固定・開始ボタングレーアウト・
        開始音→番の順・コース決定button音・ルーレット音プール・栗山1枚化・
        栗丘/由仁距離拡大・移動音train・駅一覧/順位オーバーレイ撤去・
-       goal+gameover/rank出し分け）は v4.3 のまま。
-     ※ 看板/コマ/ルーレット描画・座標骨格・席UIは現物のまま。
-     ※ server.js v3.8 / index.html v4.3 とセット。
+       goal+gameover/rank出し分け）は v4.4 のまま。
+     ※ server.js v3.8 / index.html v4.5 とセット。
    ========================================================= */
 
 const socket = io();
@@ -631,6 +637,8 @@ function processNextMove() {
     animateSteps(next.index, next.from, next.to, () => {
       lastShownSeq = next.seq;
       if (next.to >= goals[rk] && !fanfaredIndexes[next.index]) {
+        // v4.5: このコマがアニメでゴールに「到着した瞬間」に印を立てる。
+        // この印が立った人だけ、全員の画面で順位が点灯する（renderSeats参照）。
         fanfaredIndexes[next.index] = true;
         const finishedCount = latestState.players.filter(
           (pp) => pp && pp.rank && pp.rank > 0
@@ -740,11 +748,14 @@ function renderSeats(state) {
     row.appendChild(iwaBtn);
     row.appendChild(oiwBtn);
 
-    // v4.4: 順位は rank が付いていれば常に表示（出たり消えたりを解消）
+    // v4.5: 順位は「そのコマがアニメでゴール到着した(fanfaredIndexes[i]=true)」
+    // ときだけ表示。これにより state 受信直後（ルーレット回転中）に
+    // 早出しされる問題を解消。到着済みの人は全員の画面で点灯する。
     const rank = document.createElement("span");
     rank.className = "seatRank";
     rank.dataset.seat = String(i);
-    rank.textContent = (occupied && p.rank && p.rank > 0) ? (p.rank + "位") : "";
+    const showRank = occupied && p.rank && p.rank > 0 && fanfaredIndexes[i];
+    rank.textContent = showRank ? (p.rank + "位") : "";
     row.appendChild(rank);
 
     seatsEl.appendChild(row);
@@ -794,6 +805,7 @@ socket.on("resetReady", () => {
   canRoll = false;
   iStartedPressed = false;
   suppressYourTurnUntil = 0;
+  yourTurnPlayedForTurn = -1;
   wheel.style.transition = "none"; wheel.style.transform = "rotate(0deg)";
   setTimeout(() => { wheel.style.transition = ""; }, 50);
   resultEl.classList.remove("show");
@@ -802,7 +814,10 @@ socket.on("resetReady", () => {
   setTimeout(() => socket.connect(), 300);
 });
 
-let lastMyTurn = false;
+// v4.5: 「あなたの番です」の取りこぼし防止。
+// 「いまの手番(state.currentTurn)が自分で、その手番でまだ鳴らしていなければ鳴らす」。
+// yourTurnPlayedForTurn にその手番(currentTurn値)を記録し二重再生を防ぐ。
+let yourTurnPlayedForTurn = -1;
 
 socket.on("state", (state) => {
   routes = state.routes || routes;
@@ -829,7 +844,7 @@ function finalizeState(state) {
   if (state.finished && movesDone && !animating) {
     if (statusEl) statusEl.textContent = "🏁 全員ゴール！ゲーム終了";
     startBtn.disabled = true; canRoll = false;
-    lastMyTurn = false;
+    yourTurnPlayedForTurn = -1;
     resultEl.classList.remove("show");
     centerOnActivePlayer(true);
     return;
@@ -838,7 +853,7 @@ function finalizeState(state) {
     if (statusEl) statusEl.textContent = "名前を入れてルートを選び「ゲーム開始」を押してください";
     startBtn.disabled = iStartedPressed ? true : false;
     canRoll = false;
-    lastMyTurn = false;
+    yourTurnPlayedForTurn = -1;
     resultEl.classList.remove("show");
     centerOnActivePlayer(false);
     return;
@@ -855,16 +870,22 @@ function finalizeState(state) {
   if (statusEl) statusEl.textContent = "";
   canRoll = !!myTurn;
 
-  if (myTurn && !lastMyTurn) {
-    const now = Date.now();
-    if (now < suppressYourTurnUntil) {
-      const wait = suppressYourTurnUntil - now;
-      setTimeout(() => { playSound("yourTurn"); }, wait);
-    } else {
-      playSound("yourTurn");
+  if (myTurn) {
+    // v4.5: この手番でまだ鳴らしていなければ必ず鳴らす（取りこぼし防止）。
+    if (yourTurnPlayedForTurn !== state.currentTurn) {
+      yourTurnPlayedForTurn = state.currentTurn;
+      const now = Date.now();
+      if (now < suppressYourTurnUntil) {
+        const wait = suppressYourTurnUntil - now;
+        setTimeout(() => { playSound("yourTurn"); }, wait);
+      } else {
+        playSound("yourTurn");
+      }
     }
+  } else {
+    // 自分の番でなくなったらリセット（次に自分の番が来たら再び鳴る）
+    yourTurnPlayedForTurn = -1;
   }
-  lastMyTurn = !!myTurn;
 
   centerOnActivePlayer(true);
 }
@@ -873,4 +894,4 @@ function showResult() {
   if (resultEl) resultEl.classList.remove("show");
 }
 
-console.log("[sugoroku] client.js v4.4 ready (2026-06-22 06:37 JST)");
+console.log("[sugoroku] client.js v4.5 ready (2026-06-22 10:37 JST)");
